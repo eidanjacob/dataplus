@@ -17,15 +17,17 @@ coord <- read_excel("./coord.xlsx")
 # matches coordinates of aps (when known) to records
 df = merge(coord, me, "location")
 
+interval = 3600 # in seconds
+
 # creates the server for the Shiny App
 shinyServer(function(input, output) {
   
   output$map <- renderLeaflet({
     
-    # Filters for records within +/-1 hour of the input time.
+    # Filters for records within +/-1 interval of the input time.
     dataInput <- df %>% 
-      filter(time <= input$time+3600) %>%
-      filter(time >= input$time-3600)
+      filter(time <= input$time+interval) %>%
+      filter(time >= input$time-interval)
     
     # Creates map and adds a marker at each record's coordinates.
     # Eventually we would like this to be shading in regions on map by number of records.
