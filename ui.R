@@ -1,8 +1,7 @@
 library(shiny) # package for creating interactive visualizations
 
-me <- read_csv("C:/Users/Eidan Jacob/Desktop/Data+/me.csv")
-
 # Setting ranges for slider, though there is probably a neater way to do this (ideally the server would handle all data)
+me <- read_csv("./me.csv")
 start.time = (min(me$time))
 end.time = (max(me$time))
 

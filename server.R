@@ -9,10 +9,10 @@ library(leaflet)
 library(dplyr)
 library(shiny)
 
-# reading in data (will have to change this to work on other machines)
+# reading in data (project folder is working directory)
 
-me <- read_csv("C:/Users/Eidan Jacob/Desktop/Data+/me.csv")
-coord <- read_excel("C:/Users/Eidan Jacob/Desktop/Data+/coord.xlsx")
+me <- read_csv("./me.csv")
+coord <- read_excel("./coord.xlsx")
 
 # matches coordinates of aps (when known) to records
 df = merge(coord, me, "location")
