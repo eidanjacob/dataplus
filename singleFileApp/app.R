@@ -11,27 +11,36 @@ library(dplyr)
 library(shiny)
 library(deldir)
 library(sp)
+library(rgdal)
 
 # reading in data (project folder is working directory)
 me <- read_csv("../me.csv")
 coord <- read_excel("../coord.xlsx")
 
-# calculating voronoi cells and converting to polygons to plot on map
-tesselation <- deldir(coord$long, coord$lat) # computes cells
-# converts to polygon data (adapted from https://rud.is/b/2015/07/26/making-staticinteractive-voronoi-map-layers-in-ggplotleaflet/)
-vor_desc <- tile.list(tesselation)
-vor_poly <- lapply(1:length(vor_desc), function(i){
-  tmp <- cbind(vor_desc[[i]]$x, vor_desc[[i]]$y)
-  tmp <- rbind(tmp, tmp[1,])
-  Polygons(list(Polygon(tmp)), ID = i)
-})
-
 # matches coordinates of aps (when known) to records
 df = merge(coord, me, "location")
 
+coord <- unique(coord[,c(2,3)])
+
+# calculating voronoi cells and converting to polygons to plot on map
+z <- deldir(coord$long, coord$lat) # computes cells
+w <- tile.list(z)
+polys <- vector(mode="list", length=length(w))
+for (i in seq(along=polys)) {
+  pcrds <- cbind(w[[i]]$x, w[[i]]$y)
+  pcrds <- rbind(pcrds, pcrds[1,])
+  polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
+}
+SP <- SpatialPolygons(polys)
+SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,1], y=coord[,2], 
+                                                     row.names=sapply(slot(SP, "polygons"), function(x) slot(x, "ID"))))
+
+#dukePolygons <- spTransform(SPDF, CRS("+init=epsg:4326"))
+
 interval = 3600 # in seconds
-start.time = (min(me$time))
-end.time = (max(me$time))
+delay = 300 # in milliseconds
+start.time = (min(df$time))
+end.time = (max(df$time))
 
 ui <- fluidPage(
    
@@ -40,11 +49,12 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       # input a time to show chronologically nearby records on map
-      sliderInput("time", "Time", min = start.time, max = end.time, value = start.time)
+      sliderInput("time", "Time", min = start.time, max = end.time, value = start.time, animate = animationOptions(interval=delay))
     ),
     
     mainPanel(
-      leafletOutput("map")
+      leafletOutput("map"),
+      leafletOutput("polygonMap")
     )
   )
 )
@@ -62,12 +72,17 @@ server <- function(input, output) {
     # Eventually we would like this to be shading in regions on map by number of records.
     leaflet() %>%
       addTiles() %>%
-      addPolygons(vor_poly) %>%
       addMarkers(dataInput$long, dataInput$lat)
+  })
+  
+  output$polygonMap <- renderLeaflet({
+    leaflet() %>%
+      addTiles() %>%
+      addPolygons(data = SPDF) %>%
+      addMarkers(coord$long, coord$lat)
   })
   
 }
 
 # Run the application 
 shinyApp(ui = ui, server = server)
-
