@@ -37,8 +37,15 @@ SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,1], y=coord[,2],
 
 #dukePolygons <- spTransform(SPDF, CRS("+init=epsg:4326"))
 
+# ------------------------------
+# Mess with these numbers if you want.
+
 interval = 3600 # in seconds
-delay = 300 # in milliseconds
+delay = 500 # in milliseconds
+
+# ------------------------------
+
+
 start.time = (min(df$time))
 end.time = (max(df$time))
 
@@ -49,7 +56,9 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       # input a time to show chronologically nearby records on map
-      sliderInput("time", "Time", min = start.time, max = end.time, value = start.time, animate = animationOptions(interval=delay))
+      sliderInput("time", "Time", min = start.time, max = end.time,
+                  value = start.time, animate = animationOptions(interval=delay),
+                  step = 3600)
     ),
     
     mainPanel(
