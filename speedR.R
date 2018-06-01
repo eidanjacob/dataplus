@@ -11,6 +11,10 @@ speedR <- function(mac, data){
   speeds <- rep(NA, n-1)
   for(i in 1:n-1){
     timediff <- sorted$time[i+1] - sorted$time[i]
+    if(timdiff == 0){
+      speeds[i] = NaN
+      next
+    }
     c1 <- c(sorted$lat[i], sorted$long[i])
     c2 <- c(sorted$lat[i+1], sorted$long[i+1])
     distance <- distHaversine(c1, c2)
