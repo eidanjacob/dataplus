@@ -40,8 +40,8 @@ SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,1], y=coord[,2],
 # ------------------------------
 # Mess with these numbers if you want.
 
-interval = 3600 # in seconds
-delay = 500 # in milliseconds
+interval = 60 # in seconds
+delay = 30 # in milliseconds
 
 # ------------------------------
 
@@ -58,30 +58,45 @@ ui <- fluidPage(
       # input a time to show chronologically nearby records on map
       sliderInput("time", "Time", min = start.time, max = end.time,
                   value = start.time, animate = animationOptions(interval=delay),
-                  step = 3600)
-    ),
+                  step = 60)
+),
     
     mainPanel(
-      leafletOutput("map"),
-      leafletOutput("polygonMap")
+      leafletOutput("map")
     )
   )
 )
 
 server <- function(input, output) {
-   
+  
+  # Default coordinates that provide overview of entire campus
+  defLong <- -78.9284148 # -78.9397541 W Campus
+  defLati <- 36.0020571 # 36.0017932 W Campus
+  zm <- 14
+
+
+  # Creates the initial map
   output$map <- renderLeaflet({
-    
+    leaflet() %>%
+      setView("map", lng = defLong, lat = defLati,zoom = zm) %>% # fixes initial map zoom
+      addTiles() %>%
+      addPolygons(data = SPDF)
+  })
+  
+  observe({
     # Filters for records within +/-1 interval of the input time.
     dataInput <- df %>% 
       filter(time <= input$time+interval) %>%
       filter(time >= input$time-interval)
     
-    # Creates map and adds a marker at each location's coordinates. Also draws Voronoi regions.
-    leaflet() %>%
-      addTiles() %>%
-      addPolygons(data = SPDF) %>%
-      addMarkers(dataInput$long, dataInput$lat)
+    
+    # Adds a marker at each record's coordinates.
+    leafletProxy("map") %>% 
+      clearMarkers() %>%
+      addMarkers(dataInput$long, dataInput$lat) 
+    
+    
+    
   })
   
 }
