@@ -28,12 +28,29 @@ locations$location[728:729] = "Craven"
 locations$location[730:731] = "Crowell"
 locations$location[734:803] = "WestUnion"
 locations$location[813:815] = "Page"
-locations$location[816:824] = "Card" # Wilson Gym (not called Wilson bcz of Wilson Dorm on East)
+locations$location[c(816:824, 2371:2393)] = "Card" # Wilson Gym (not called Wilson bcz of Wilson Dorm on East)
 locations$location[825:855] = "Sanford"
 locations$location[856:864] = "CAE" # Center for Athletic Excellence
 locations$location[865:931] = "Ciemas"
 locations$location[932:1017] = "French"
-locations$location[:] = ""
+locations$location[1037:1039] = "Schwartz"
+locations$location[1040:1336] = "Few"
+locations$location[1337:1423] = "Cameron"
+locations$location[1424:1440] = "Telcom"
+locations$location[1441:1500] = "Hudson"
+locations$location[1501:1560] = "Physics"
+locations$location[1561:1635] = "Allen"
+locations$location[1636:1763] = "Wannamaker"
+locations$location[1764:1799] = "North"
+locations$location[1800:1897] = "BioSci"
+locations$location[1898:1980] = "Law"
+locations$location[1981:2105] = "Fuqua"
+locations$location[2106:2112] = "FacultyClub"
+locations$location[2114:2129] = "Teer"
+locations$location[2130:2143] = "TUNL"
+locations$location[2144:2370] = "LSRC"
+locations$location[2394:2395] = "Yoh"
+locations$location[2396:2412] = "FELL"
 
 
 # Adding Location labels
