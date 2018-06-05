@@ -1,0 +1,16 @@
+---
+title: "voronoi"
+author: "Eidan Jacob"
+date: "May 31, 2018"
+output: html_document
+---
+
+```{r}
+library(deldir)
+library(readxl)
+coord <- read_excel("./coord.xlsx")
+plot(coord$long, coord$lat, col = "red")
+tesselation <- deldir(coord$long, coord$lat)
+plot(tesselation, wlines = "tess", wpoints = "none", number = F, add = T, lty = 1)
+```
+
