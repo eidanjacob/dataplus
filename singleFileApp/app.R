@@ -12,6 +12,7 @@ library(deldir)
 library(sp)
 library(rgdal)
 library(readxl)
+library(lubridate)
 
 # reading in data (project folder is working directory)
 coord <- read_csv("../locationsToCoordinates.csv")
@@ -21,7 +22,6 @@ validLocations <- read_csv("../locationsValid", col_types = cols(X1 = col_skip()
 
 # match aps to locations, merge for coordinates
 df <- splunkData[!is.na(splunkData$ap),]
-df <- df[1:1000, ]
 
 nameMatch = which(validLocations$APname %in% df$ap)
 numMatch = which(validLocations$APnum %in% df$ap)
@@ -49,7 +49,7 @@ lapply(1:length(coord$location), function(x){SPDF@polygons[[x]]@ID <- coord$loca
 
 # ------------------------------
 # Mess with these numbers if you want.
-interval = 600 # in seconds
+timeStep = 15 * 60 # in seconds
 delay = 30 # in milliseconds
 # ------------------------------
 
@@ -57,7 +57,7 @@ start.time = (min(df$`_time`))
 end.time = (max(df$`_time`))
 
 ui <- fluidPage(
-   
+  
   titlePanel("Duke Wireless Data"),
   
   sidebarLayout(
@@ -65,12 +65,12 @@ ui <- fluidPage(
       # input a time to show chronologically nearby records on map
       sliderInput("time", "Time", min = start.time, max = end.time,
                   value = start.time, animate = animationOptions(interval=delay),
-                  step = 60),
+                  step = timeStep),
       checkboxGroupInput("include", "Locations", choices = coord$location, selected = coord$location)
-  ),
+    ),
     
     mainPanel(
-      leafletOutput("map")
+      leafletOutput("map", height = 850)
     )
   )
 )
@@ -80,8 +80,8 @@ server <- function(input, output) {
   # Default coordinates that provide overview of entire campus
   defLong <- -78.9284148 # -78.9397541 W Campus
   defLati <- 36.0020571 # 36.0017932 W Campus
-  zm <- 14
-
+  zm <- 15
+  
   # Creates the initial map
   output$map <- renderLeaflet({
     leaflet() %>%
@@ -91,20 +91,20 @@ server <- function(input, output) {
   })
   
   observe({
-    #Filters for records within +/-1 interval of the input time.
+    #Filters for records within +/-1 timeStep of the input time.
+    selInt = interval(input$time - timeStep, input$time + timeStep)
     dataInput <- df %>%
-      filter(`_time` <= input$time+interval) %>%
-      filter(`_time` >= input$time-interval) %>%
+      filter(`_time` %within% selInt) %>%
       filter(`location.y` %in% input$include)
     
     # Calculate Population Densities
     locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
-    locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(df$macaddr[df$`location.y` == x]))})
+    locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(dataInput$macaddr[dataInput$`location.y` == x]))})
     densities <- sapply(1:nrow(locationBinnedPop), function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area})
     
     # setting up for chloropleth
     palette <- colorNumeric("YlOrRd", densities)
-
+    
     # Adds polygons.
     leafletProxy("map") %>%
       clearShapes() %>%
@@ -114,7 +114,7 @@ server <- function(input, output) {
                   fillOpacity = .5,
                   fillColor = ~palette(densities[which(coord$location %in% input$include)])) %>%
       addLegend(pal = palette, values = densities)
-
+    
   })
   
 }
