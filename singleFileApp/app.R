@@ -26,18 +26,21 @@ splunkData <- read_csv("../eventData.csv")
 validLocations <- read_csv("../locationsValid", col_types = cols(X1 = col_skip())) # aps <-> locations
 
 # match aps to locations, merge for coordinates
-df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
+splunkdf <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
 
 # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
-nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
-numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
+nameMatch = which(validLocations$APname %in% splunkdf$ap) # find which aps have their name in the data
+numMatch = which(validLocations$APnum %in% splunkdf$ap) # find which aps have their number in the data
 validLocations$ap = c(NA) # new "flexible" column to store either name or number
 validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
 validLocations$ap[numMatch] = validLocations$APnum[numMatch]
 
 validLocations <- merge(coord, validLocations) # link coordinates to locations
-# use the new "flexible" ap variable to merge coordinates onto df
-df <- merge(df, validLocations, by = "ap") # this is the slow step
+# use the new "flexible" ap variable to merge coordinates onto splunkdf
+splunkdf <- merge(splunkdf, validLocations, by = "ap") # this is the slow step
+
+start.time = (min(splunkdf$`_time`))
+end.time = (max(splunkdf$`_time`))
 
 # calculating voronoi cells and converting to polygons to plot on map
 z <- deldir(coord$long, coord$lat) # computes cells
@@ -56,17 +59,61 @@ SPDF@data$ID = coord$location
 sapply(1:length(coord$location), function(x){
   SPDF@polygons[[x]]@ID <- coord$location[x]
   SPDF <<- SPDF
-  }
-)
+})
+
+# Default coordinates that provide overview of entire campus
+defLong <- -78.9284148 # -78.9397541 W Campus
+defLati <- 36.0020571 # 36.0017932 W Campus
+zm <- 14 # default zoom level
+# Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
+p1 <- c(defLong, defLati)
+degScale = -3
+p2 <- c(defLong + 10 ^ degScale, defLati)
+p3 <- c(defLong, defLati + 10 ^ degScale)
+# The Haversine formula calculates distances along a spherical surface.
+areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
+areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
 
 # ------------------------------
 # Mess with these numbers if you want.
-timeStep = 60 * 60 # in seconds
-delay = 500 # in milliseconds
+timeSteps = c("3 hr" = 3*60*60, "4 hr" = 4*60*60) # in seconds
+delay = 750 # in milliseconds
 # ------------------------------
 
-start.time = (min(df$`_time`))
-end.time = (max(df$`_time`))
+popDensityList <- list()
+paletteList <- NULL
+
+for(i in 1:length(timeSteps)){
+  timeStep <- timeSteps[i]
+  # Bin populations, calculate densities at each timestep, and cache for future plotting
+  time.windowStart = start.time # time.window for selection
+  populationDensities <- NULL
+  
+  while(end.time > time.windowStart){
+    
+    # Filter for time interval
+    selInt = interval(time.windowStart, time.windowStart + timeStep)
+    thisStep <- splunkdf %>%
+      filter(`_time` %within% selInt)
+    
+    # Calculate Population Densities
+    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
+    # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
+    locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
+    # Calculate a measure of people / (100 sq meters) 
+    densities <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
+    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, "density" = densities, "time.window" = c(time.windowStart))
+    populationDensities <- rbind(populationDensities, densitiesToSave)
+    time.windowStart = time.windowStart + timeStep
+  }
+  
+  # setting up for chloropleth
+  palette <- colorNumeric("YlOrRd", populationDensities$density)
+  
+  # Cache these guys away for later
+  popDensityList[[i]] <- populationDensities
+  paletteList <- c(paletteList, palette)
+}
 
 # app user interface
 ui <- fluidPage(
@@ -75,11 +122,13 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      # input a time to show temporally close records on map
-      sliderInput("time", "Time", min = start.time, max = end.time,
-                  value = start.time, animate = animationOptions(interval=delay),
-                  step = timeStep),
-      checkboxGroupInput("include", "Locations", choices = coord$location, selected = coord$location) # select polygons to display (would like to remove this and allow user to click on polygon itself instead)
+      
+      # input a timeStep to choose time resolution
+      selectInput("timeStepSelection", "Step Size", choices = timeSteps, selected = timeSteps[1]),
+      
+      # output the slider
+      uiOutput("ui")
+      
     ),
     
     mainPanel(
@@ -89,55 +138,41 @@ ui <- fluidPage(
 )
 
 # app backend
-server <- function(input, output) {
+server <- function(input, output, session){
   
-  # Default coordinates that provide overview of entire campus
-  defLong <- -78.9284148 # -78.9397541 W Campus
-  defLati <- 36.0020571 # 36.0017932 W Campus
-  zm <- 14 # default zoom level
-  # Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
-  p1 <- c(defLong, defLati)
-  degScale = -3
-  p2 <- c(defLong + 10 ^ degScale, defLati)
-  p3 <- c(defLong, defLati + 10 ^ degScale)
-  # The Haversine formula calculates distances along a spherical surface.
-  areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
-  areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
-
   # Creates the initial map
   output$map <- renderLeaflet({
     leaflet() %>%
       setView("map", lng = defLong, lat = defLati, zoom = zm) %>% # sets initial map zoom & center
-      addTiles() # adds Open Street Map info (otherwise just a gray box)
-    
+      addProviderTiles(providers$OpenStreetMap.BlackAndWhite) # adds Open Street Map info (otherwise just a gray box)
+  })
+  
+  output$ui <- renderUI({
+    # input a time to show temporally close records on map
+    sliderInput("time", "Time", min = start.time, max = end.time,
+                value = start.time, animate = animationOptions(interval=delay),
+                step = dseconds(input$timeStepSelection))
   })
   
   observe({
-    #Filters for records within +/-1 timeStep of the input time.
-    selInt = interval(input$time - timeStep, input$time + timeStep) # window for selection
-    dataInput <- df %>%
-      filter(`_time` %within% selInt) %>% # remove out-of-time data
-      filter(`location.y` %in% input$include) # remove data from deselected locations
-    
-    # Calculate Population Densities
-    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
-    # For each location, count the number of unique devices (MAC addresses) that are present during the time window.
-    locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(dataInput$macaddr[dataInput$`location.y` == x]))})
-    # Calculate a measure of people / (100 sq meters) 
-    densities <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    
-    # setting up for chloropleth
-    palette <- colorNumeric("YlOrRd", densities)
+  
+    #Filters for records within timeStep of the input time.
+    populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
+    if(is.null(input$time)){
+      return()
+    }
+    thisStep <- populationDensities %>%
+      filter(time.window == input$time)
     
     # Adds polygons and colors by population density.
     leafletProxy("map") %>%
       clearShapes() %>%
       clearControls() %>%
-      addPolygons(data = SPDF[SPDF@data$ID %in% input$include, ],
+      addPolygons(data = SPDF[SPDF@data$ID, ],
                   weight = 2,
                   fillOpacity = .5,
-                  fillColor = ~palette(densities[which(coord$location %in% input$include)])) %>%
-      addLegend(pal = palette, values = densities)
+                  fillColor = ~palette(thisStep$density)) %>%
+      addLegend(pal = palette, values = thisStep$density)
     
   })
   
