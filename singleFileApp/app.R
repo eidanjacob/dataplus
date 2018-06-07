@@ -62,9 +62,9 @@ sapply(1:length(coord$location), function(x){
 })
 
 # Default coordinates that provide overview of entire campus
-defLong <- -78.9284148 # -78.9397541 W Campus
-defLati <- 36.0020571 # 36.0017932 W Campus
-zm <- 14 # default zoom level
+defLong <- -78.9397541 # -78.9284148 W Campus
+defLati <-  36.0017932 #  36.0020571 W Campus
+zm <- 15 # default zoom level
 # Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
 p1 <- c(defLong, defLati)
 degScale = -3
@@ -76,12 +76,14 @@ areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
 
 # ------------------------------
 # Mess with these numbers if you want.
-timeSteps = c("3 hr" = 3*60*60, "4 hr" = 4*60*60) # in seconds
-delay = 750 # in milliseconds
+timeSteps = c("1hr" = 60*60, "2hr" = 2*60*60, "4 hr" = 4*60*60) # in seconds
+# timeSteps = c("3 hr" = 3 * 60 * 60) # Fast version
+delay = 1500 # in milliseconds
 # ------------------------------
 
 popDensityList <- list()
-paletteList <- NULL
+paletteList <- list()
+end.times <- rep(end.time, length(timeSteps))
 
 for(i in 1:length(timeSteps)){
   timeStep <- timeSteps[i]
@@ -104,6 +106,7 @@ for(i in 1:length(timeSteps)){
     densities <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
     densitiesToSave <- data.frame("locations" = locationBinnedPop$location, "density" = densities, "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
+    end.times[i] <- time.windowStart
     time.windowStart = time.windowStart + timeStep
   }
   
@@ -112,7 +115,7 @@ for(i in 1:length(timeSteps)){
   
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
-  paletteList <- c(paletteList, palette)
+  paletteList[[i]] <- palette
 }
 
 # app user interface
@@ -149,7 +152,7 @@ server <- function(input, output, session){
   
   output$ui <- renderUI({
     # input a time to show temporally close records on map
-    sliderInput("time", "Time", min = start.time, max = end.time,
+    sliderInput("time", "Time", min = start.time, max = end.times[which(timeSteps == input$timeStepSelection)],
                 value = start.time, animate = animationOptions(interval=delay),
                 step = dseconds(input$timeStepSelection))
   })
@@ -169,10 +172,14 @@ server <- function(input, output, session){
       clearShapes() %>%
       clearControls() %>%
       addPolygons(data = SPDF[SPDF@data$ID, ],
-                  weight = 2,
+                  weight = 1.5,
+                  color = 'black',
                   fillOpacity = .5,
                   fillColor = ~palette(thisStep$density)) %>%
-      addLegend(pal = palette, values = thisStep$density)
+      addLegend(pal = paletteList[[which(timeSteps == input$timeStepSelection)]], 
+                values = populationDensities$density,
+                position = "topleft",
+                title = "Unique Devices per 100 sq m")
     
   })
   
