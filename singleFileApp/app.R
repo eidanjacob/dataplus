@@ -104,7 +104,7 @@ for(i in 1:length(timeSteps)){
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
     # Calculate a measure of people / (100 sq meters) 
     densities <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, "density" = densities, "time.window" = c(time.windowStart))
+    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, "pop" = locationBinnedPop$pop, "density" = densities, "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
     end.times[i] <- time.windowStart
     time.windowStart = time.windowStart + timeStep
@@ -158,7 +158,7 @@ server <- function(input, output, session){
   })
   
   observe({
-  
+    
     #Filters for records within timeStep of the input time.
     populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
     if(is.null(input$time)){
@@ -166,6 +166,12 @@ server <- function(input, output, session){
     }
     thisStep <- populationDensities %>%
       filter(time.window == input$time)
+    
+    # Setting up for hover tooltips
+    labels <-  sprintf("<strong>%s</strong><br/ >%g uniq macaddrs",
+                       thisStep$locations, # location
+                       thisStep$pop) %>% # number of unique macaddrs 
+      lapply(htmltools::HTML)
     
     # Adds polygons and colors by population density.
     leafletProxy("map") %>%
@@ -175,7 +181,8 @@ server <- function(input, output, session){
                   weight = 1.5,
                   color = 'black',
                   fillOpacity = .5,
-                  fillColor = ~palette(thisStep$density)) %>%
+                  fillColor = ~palette(thisStep$density),
+                  label = labels) %>%
       addLegend(pal = paletteList[[which(timeSteps == input$timeStepSelection)]], 
                 values = populationDensities$density,
                 position = "topleft",
