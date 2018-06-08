@@ -1,3 +1,6 @@
+# before changing all the includes
+
+
 # Load packages:
 # readr, readxl for data frame input
 # leaflet for mapping
@@ -26,21 +29,18 @@ splunkData <- read_csv("../eventData.csv")
 validLocations <- read_csv("../locationsValid", col_types = cols(X1 = col_skip())) # aps <-> locations
 
 # match aps to locations, merge for coordinates
-splunkdf <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
+df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
 
 # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
-nameMatch = which(validLocations$APname %in% splunkdf$ap) # find which aps have their name in the data
-numMatch = which(validLocations$APnum %in% splunkdf$ap) # find which aps have their number in the data
+nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
+numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
 validLocations$ap = c(NA) # new "flexible" column to store either name or number
 validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
 validLocations$ap[numMatch] = validLocations$APnum[numMatch]
 
 validLocations <- merge(coord, validLocations) # link coordinates to locations
-# use the new "flexible" ap variable to merge coordinates onto splunkdf
-splunkdf <- merge(splunkdf, validLocations, by = "ap") # this is the slow step
-
-start.time = (min(splunkdf$`_time`))
-end.time = (max(splunkdf$`_time`))
+# use the new "flexible" ap variable to merge coordinates onto df
+df <- merge(df, validLocations, by = "ap") # this is the slow step
 
 # calculating voronoi cells and converting to polygons to plot on map
 z <- deldir(coord$long, coord$lat) # computes cells
@@ -77,9 +77,12 @@ areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
 # ------------------------------
 # Mess with these numbers if you want.
 timeSteps = c("1hr" = 60*60, "2hr" = 2*60*60, "4 hr" = 4*60*60) # in seconds
-# timeSteps = c("3 hr" = 3 * 60 * 60) # Fast version
+# timeSteps = c("4 hr" = 4*60*60)
 delay = 1500 # in milliseconds
 # ------------------------------
+
+start.time = (min(df$`_time`))
+end.time = (max(df$`_time`))
 
 popDensityList <- list()
 paletteList <- list()
@@ -95,7 +98,7 @@ for(i in 1:length(timeSteps)){
     
     # Filter for time interval
     selInt = interval(time.windowStart, time.windowStart + timeStep)
-    thisStep <- splunkdf %>%
+    thisStep <- df %>%
       filter(`_time` %within% selInt)
     
     # Calculate Population Densities
@@ -125,13 +128,11 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      
-      # input a timeStep to choose time resolution
-      selectInput("timeStepSelection", "Step Size", choices = timeSteps, selected = timeSteps[1]),
-      
-      # output the slider
-      uiOutput("ui")
-      
+      # input a time to show temporally close records on map
+      selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeStep[1]),
+      uiOutput("ui"),
+      selectInput("select", "View", choices = 
+                    list("Population Density" = 1, "Deviation from Normal" = 2, "Clustering" = 3), selected = 1) # Eventually would like to work, just here as an idea that could be implemented
     ),
     
     mainPanel(
@@ -141,7 +142,20 @@ ui <- fluidPage(
 )
 
 # app backend
-server <- function(input, output, session){
+server <- function(input, output) {
+  
+  # Default coordinates that provide overview of entire campus
+  defLong <- -78.9284148 # -78.9397541 W Campus
+  defLati <- 36.0020571 # 36.0017932 W Campus
+  zm <- 14 # default zoom level
+  # Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
+  p1 <- c(defLong, defLati)
+  degScale = -3
+  p2 <- c(defLong + 10 ^ degScale, defLati)
+  p3 <- c(defLong, defLati + 10 ^ degScale)
+  # The Haversine formula calculates distances along a spherical surface.
+  areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
+  areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
   
   # Creates the initial map
   output$map <- renderLeaflet({
@@ -158,7 +172,6 @@ server <- function(input, output, session){
   })
   
   observe({
-    
     #Filters for records within timeStep of the input time.
     populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
     if(is.null(input$time)){
@@ -166,7 +179,7 @@ server <- function(input, output, session){
     }
     thisStep <- populationDensities %>%
       filter(time.window == input$time)
-    
+
     # Setting up for hover tooltips
     labels <-  sprintf("<strong>%s</strong><br/ >%g uniq macaddrs",
                        thisStep$locations, # location
@@ -185,7 +198,7 @@ server <- function(input, output, session){
                   label = labels) %>%
       addLegend(pal = paletteList[[which(timeSteps == input$timeStepSelection)]], 
                 values = populationDensities$density,
-                position = "topleft",
+                position = "topright",
                 title = "Unique Devices per 100 sq m")
     
   })
