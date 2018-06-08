@@ -3733,14 +3733,9 @@
 "3732","wcsp-3","64:00:f1:84:b4:93","Ciemas"
 "3733","wcsp-4","e8:b7:48:2c:67:3a","Ciemas"
 "3734","wcsp-controll-rm","64:00:f1:84:b4:df","Ciemas"
-<<<<<<< HEAD
 "3735","west-grounds-105a-c","a0:e0:af:0e:3c:e4","Grounds"
 "3736","west-grounds-conf-rm-c","a4:6c:2a:76:05:9c","Grounds"
-=======
-"3735","west-grounds-105a-c","a0:e0:af:0e:3c:e4",NA
-"3736","west-grounds-conf-rm-c","a4:6c:2a:76:05:9c",NA
->>>>>>> 7fd11d8eaa7c0ee00dcaf190baf3e85b5d8c7980
-"3737","west-grounds-garage","64:9e:f3:0e:c9:56",NA
+"3737","west-grounds-garage","64:9e:f3:0e:c9:56","Grounds"
 "3738","yoh-101-w","7c:ad:74:fb:d9:40","WallaceWade"
 "3739","yoh-130-1-coach-cutciffe-w","00:a2:89:1a:4a:90","WallaceWade"
 "3740","yoh-140-w","2c:54:2d:9e:04:b9","WallaceWade"
@@ -7240,11 +7235,7 @@
 "7234","card-gym-104-1-c","cc:16:7e:98:7e:10","Card"
 "7235","cardgym-206-w","2c:54:2d:9e:18:48","Card"
 "7236","cardgym-bballcourt-w","00:c1:64:82:b5:10","Card"
-<<<<<<< HEAD
 "7237","cell-headend-bld","7c:ad:74:28:50:4e",NA
-=======
-"7237","cell-headend-bld","7c:ad:74:28:50:4e","NA"
->>>>>>> 7fd11d8eaa7c0ee00dcaf190baf3e85b5d8c7980
 "7238","chillerplant-1-control-rm","84:b8:02:ef:20:88","ChillerPlant1"
 "7239","chiller-plant2-bsmt-1-c","c4:64:13:76:65:23","ChillerPlant2"
 "7240","chiller-plant2-bsmt-2-w","7c:ad:74:84:fe:da","ChillerPlant2"
@@ -7499,13 +7490,8 @@
 "7489","west-grounds-conf-rm-c","a4:6c:2a:76:05:9c","Grounds"
 "7490","west-grounds-garage","64:9e:f3:0e:c9:56","Grounds"
 "7491","yoh-101-w","7c:ad:74:fb:d9:40","WallaceWade"
-<<<<<<< HEAD
-"7492","yoh-130-1-coach-cutciffe-w","00:a2:89:1a:4a:90","Yoh"
-"7493","yoh-140-w","2c:54:2d:9e:04:b9","Yoh"
-=======
 "7492","yoh-130-1-coach-cutciffe-w","00:a2:89:1a:4a:90","WallaceWade"
 "7493","yoh-140-w","2c:54:2d:9e:04:b9","WallaceWade"
->>>>>>> 7fd11d8eaa7c0ee00dcaf190baf3e85b5d8c7980
 "7494","yoh-209-w","7c:ad:74:85:05:ec","WallaceWade"
 "7495","yoh-214-offensive-line","7c:ad:74:50:2c:b7","WallaceWade"
 "7496","yoh-216-l-w","7c:ad:74:28:59:e0","WallaceWade"
@@ -7516,10 +7502,6 @@
 "7501","yoh-417-h-c","7c:ad:74:18:c3:48","WallaceWade"
 "7502","yoh-4thfl-lobby-c","4c:4e:35:0d:52:b5","WallaceWade"
 "7503","yoh-locker-rm-1-c","c4:64:13:c3:0d:60","WallaceWade"
-<<<<<<< HEAD
-"7504","yoh-locker-rm-2-c","00:6b:f1:bc:45:20","Yoh"
-=======
 "7504","yoh-locker-rm-2-c","00:6b:f1:bc:45:20","WallaceWade"
->>>>>>> 7fd11d8eaa7c0ee00dcaf190baf3e85b5d8c7980
 "7505","yoh-video-rm-w","7c:ad:74:84:ff:a4","WallaceWade"
 "7506","yoh-weightroom-1-c","84:b8:02:64:dd:e8","WallaceWade"
