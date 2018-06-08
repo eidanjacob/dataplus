@@ -106,15 +106,15 @@ for(i in 1:length(timeSteps)){
     # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
     # Calculate a measure of people / (100 sq meters) 
-    densities <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, "pop" = locationBinnedPop$pop, "density" = densities, "time.window" = c(time.windowStart))
+    densities_area <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
+    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, "pop" = locationBinnedPop$pop, "density_area" = densities_area, "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
     end.times[i] <- time.windowStart
     time.windowStart = time.windowStart + timeStep
   }
   
   # setting up for chloropleth
-  palette <- colorNumeric("YlOrRd", populationDensities$density)
+  palette <- colorNumeric("YlOrRd", populationDensities$density_area)
   
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
@@ -132,7 +132,7 @@ ui <- fluidPage(
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeStep[1]),
       uiOutput("ui"),
       selectInput("select", "View", choices = 
-                    list("Population Density" = 1, "Deviation from Normal" = 2, "Clustering" = 3), selected = 1) # Eventually would like to work, just here as an idea that could be implemented
+                    list("Population Density (area)" = 1, "Population Density (aps)" = 2, "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1) # Eventually would like to work, just here as an idea that could be implemented
     ),
     
     mainPanel(
@@ -194,10 +194,10 @@ server <- function(input, output) {
                   weight = 1.5,
                   color = 'black',
                   fillOpacity = .5,
-                  fillColor = ~palette(thisStep$density),
+                  fillColor = ~palette(thisStep$density_area),
                   label = labels) %>%
       addLegend(pal = paletteList[[which(timeSteps == input$timeStepSelection)]], 
-                values = populationDensities$density,
+                values = populationDensities$density_area,
                 position = "topright",
                 title = "Unique Devices per 100 sq m")
     
