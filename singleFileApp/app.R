@@ -1,6 +1,3 @@
-# before changing all the includes
-
-
 # Load packages:
 # readr, readxl for data frame input
 # leaflet for mapping
@@ -27,6 +24,7 @@ coord <- read_csv("../locationsToCoordinates.csv") # locations <-> coordinates
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
 splunkData <- read_csv("../eventData.csv") 
 validLocations <- read_csv("../locationsValid", col_types = cols(X1 = col_skip())) # aps <-> locations
+numAP <- read_csv("../APnums.csv") # number of APs in each location
 
 # match aps to locations, merge for coordinates
 df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
@@ -129,7 +127,7 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       # input a time to show temporally close records on map
-      selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeStep[1]),
+      selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
       selectInput("select", "View", choices = 
                     list("Population Density (area)" = 1, "Population Density (aps)" = 2, "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1) # Eventually would like to work, just here as an idea that could be implemented
@@ -157,6 +155,21 @@ server <- function(input, output) {
   areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
   areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
   
+  # list of locations to be included
+  include <- reactiveValues(poly = coord$location)
+  
+  # Seeing if a polygon was clicked and hiding/showing it as needed
+  observeEvent(input$map_shape_click, {
+    clickedLoc <- input$map_shape_click$'id'
+    if(clickedLoc %in% include$poly) {
+      include$poly <- include$poly[!include$poly %in% clickedLoc] # taking out of included polygons
+    }
+    else {
+      include$poly <- c(include$poly, clickedLoc) # putting it back into included polygons
+      include$poly <- sort(include$poly) # need to sort so that shapes drawn have correct id
+    }
+  })
+  
   # Creates the initial map
   output$map <- renderLeaflet({
     leaflet() %>%
@@ -178,10 +191,11 @@ server <- function(input, output) {
       return()
     }
     thisStep <- populationDensities %>%
-      filter(time.window == input$time)
-
+      filter(time.window == input$time) %>% 
+      filter(locations %in% include$poly)
+    
     # Setting up for hover tooltips
-    labels <-  sprintf("<strong>%s</strong><br/ >%g uniq macaddrs",
+    labels <-  sprintf("<strong>%s</strong><br/ >%g uniq macaddrs", # eventually would also like to list number of APs
                        thisStep$locations, # location
                        thisStep$pop) %>% # number of unique macaddrs 
       lapply(htmltools::HTML)
@@ -190,12 +204,20 @@ server <- function(input, output) {
     leafletProxy("map") %>%
       clearShapes() %>%
       clearControls() %>%
-      addPolygons(data = SPDF[SPDF@data$ID, ],
+      addPolygons(data = SPDF[SPDF@data$ID %in% thisStep$location, ], # draws the included polygons
+                  layerId = thisStep$location,
                   weight = 1.5,
                   color = 'black',
                   fillOpacity = .5,
-                  fillColor = ~palette(thisStep$density_area),
+                  fillColor = ~palette(thisStep$density),
                   label = labels) %>%
+      addPolygons(data = SPDF[!SPDF@data$ID %in% thisStep$location, ], # draws the unincluded polygons
+                  layerId = coord$location[!coord$location %in% thisStep$location],
+                  weight = 1.5,
+                  color = 'white',
+                  opacity = 0.2,
+                  fillOpacity = 0,
+                  fillColor = ~palette(thisStep$density)) %>%
       addLegend(pal = paletteList[[which(timeSteps == input$timeStepSelection)]], 
                 values = populationDensities$density_area,
                 position = "topright",
