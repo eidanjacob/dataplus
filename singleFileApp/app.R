@@ -25,22 +25,26 @@ library(geosphere)
 # reading in data (project folder is working directory)
 coord <- read_csv("../locationsToCoordinates.csv") # locations <-> coordinates
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
-splunkData <- read_csv("../eventData.csv") 
 validLocations <- read_csv("../locationsValid", col_types = cols(X1 = col_skip())) # aps <-> locations
+# splunkData <- read_csv("../eventData.csv")
+# 
+# # match aps to locations, merge for coordinates
+# df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
+# 
+# # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
+# nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
+# numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
+# validLocations$ap = c(NA) # new "flexible" column to store either name or number
+# validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
+# validLocations$ap[numMatch] = validLocations$APnum[numMatch]
+# 
+# validLocations <- merge(coord, validLocations) # link coordinates to locations
+# # use the new "flexible" ap variable to merge coordinates onto df
+# df <- merge(df, validLocations, by = "ap") # this is the slow step
+# write.csv(df, "../mergedData.csv)
 
-# match aps to locations, merge for coordinates
-df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
-
-# Some aps are in splunk data with name, some with number - code below matches location using whichever is available
-nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
-numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
-validLocations$ap = c(NA) # new "flexible" column to store either name or number
-validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
-validLocations$ap[numMatch] = validLocations$APnum[numMatch]
-
-validLocations <- merge(coord, validLocations) # link coordinates to locations
-# use the new "flexible" ap variable to merge coordinates onto df
-df <- merge(df, validLocations, by = "ap") # this is the slow step
+df <- read_csv("../mergedData.csv")
+df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
 # calculating voronoi cells and converting to polygons to plot on map
 z <- deldir(coord$long, coord$lat) # computes cells
@@ -121,6 +125,19 @@ for(i in 1:length(timeSteps)){
   paletteList[[i]] <- palette
 }
 
+# Default coordinates that provide overview of entire campus
+defLong <- -78.9284148 # -78.9397541 W Campus
+defLati <- 36.0020571 # 36.0017932 W Campus
+zm <- 14 # default zoom level
+# Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
+p1 <- c(defLong, defLati)
+degScale = -3
+p2 <- c(defLong + 10 ^ degScale, defLati)
+p3 <- c(defLong, defLati + 10 ^ degScale)
+# The Haversine formula calculates distances along a spherical surface.
+areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
+areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
+
 # app user interface
 ui <- fluidPage(
   
@@ -129,7 +146,7 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       # input a time to show temporally close records on map
-      selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeStep[1]),
+      selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
       selectInput("select", "View", choices = 
                     list("Population Density (area)" = 1, "Population Density (aps)" = 2, "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1) # Eventually would like to work, just here as an idea that could be implemented
@@ -143,19 +160,6 @@ ui <- fluidPage(
 
 # app backend
 server <- function(input, output) {
-  
-  # Default coordinates that provide overview of entire campus
-  defLong <- -78.9284148 # -78.9397541 W Campus
-  defLati <- 36.0020571 # 36.0017932 W Campus
-  zm <- 14 # default zoom level
-  # Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
-  p1 <- c(defLong, defLati)
-  degScale = -3
-  p2 <- c(defLong + 10 ^ degScale, defLati)
-  p3 <- c(defLong, defLati + 10 ^ degScale)
-  # The Haversine formula calculates distances along a spherical surface.
-  areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
-  areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
   
   # Creates the initial map
   output$map <- renderLeaflet({
@@ -174,7 +178,7 @@ server <- function(input, output) {
   observe({
     #Filters for records within timeStep of the input time.
     populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
-    if(is.null(input$time)){
+    if(is.null(input$time) | is.null(input$timeStepSelection)){
       return()
     }
     thisStep <- populationDensities %>%
