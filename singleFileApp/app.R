@@ -20,10 +20,9 @@ library(lubridate)
 library(geosphere)
 
 # reading in data (project folder is working directory)
-coord <- read_csv("../locationsToCoordinates.csv") # locations <-> coordinates
+coord <- read_csv("../locationsToCoordinates.csv",)
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
-validLocations <- read_csv("../locationsValid", col_types = cols(X1 = col_skip())) # aps <-> locations
-<<<<<<< HEAD
+validLocations <- read_csv("../allAPs.csv") # aps <-> locations
 # splunkData <- read_csv("../eventData.csv")
 # 
 # # match aps to locations, merge for coordinates
@@ -39,7 +38,7 @@ validLocations <- read_csv("../locationsValid", col_types = cols(X1 = col_skip()
 # validLocations <- merge(coord, validLocations) # link coordinates to locations
 # # use the new "flexible" ap variable to merge coordinates onto df
 # df <- merge(df, validLocations, by = "ap") # this is the slow step
-# write.csv(df, "../mergedData.csv)
+# write.csv(df, "../mergedData.csv")
 
 df <- read_csv("../mergedData.csv")
 df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
@@ -157,7 +156,7 @@ ui <- fluidPage(
 )
 
 # app backend
-server <- function(input, output) {
+server <- function(input, output, session) {
   
   # list of locations to be included
   include <- reactiveValues(poly = coord$location)
@@ -194,6 +193,9 @@ server <- function(input, output) {
     if(is.null(input$time) | is.null(input$timeStepSelection)){
       return()
     }
+    if(!any(populationDensities$time.window == input$time)){
+      return()
+    }
     thisStep <- populationDensities %>%
       filter(time.window == input$time) %>% 
       filter(locations %in% include$poly)
@@ -210,7 +212,7 @@ server <- function(input, output) {
       clearControls() %>%
       addPolygons(data = SPDF[SPDF@data$ID %in% thisStep$location, ], # draws the included polygons
                   layerId = thisStep$location,
-                  weight = 1.5,
+                  weight = 1,
                   color = 'black',
                   fillOpacity = .5,
                   fillColor = ~palette(thisStep$density),
