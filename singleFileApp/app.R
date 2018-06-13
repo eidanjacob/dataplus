@@ -18,11 +18,13 @@ library(sp)
 library(rgdal)
 library(lubridate)
 library(geosphere)
+library(raster)
 
 # reading in data (project folder is working directory)
-coord <- read_csv("../locationsToCoordinates.csv",)
+coord <- read_csv("../locationsToCoordinates.csv")
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
 validLocations <- read_csv("../allAPs.csv") # aps <-> locations
+dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
 # splunkData <- read_csv("../eventData.csv")
 # 
 # # match aps to locations, merge for coordinates
@@ -39,10 +41,20 @@ validLocations <- read_csv("../allAPs.csv") # aps <-> locations
 # # use the new "flexible" ap variable to merge coordinates onto df
 # df <- merge(df, validLocations, by = "ap") # this is the slow step
 # write.csv(df, "../mergedData.csv")
-
+ 
 df <- read_csv("../mergedData.csv")
 df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
+# draw duke border
+p = Polygon(dukeShape)
+ps = Polygons(list(p),1)
+sps = SpatialPolygons(list(ps))
+
+# remove out-of-bounds locations
+inBounds <- sapply(1:nrow(coord), function(x) {
+  point.in.polygon(coord$long[x], coord$lat[x], unlist(dukeShape[,1]), unlist(dukeShape[,2]))
+  })
+coord <- coord[inBounds == 1,]
 # calculating voronoi cells and converting to polygons to plot on map
 z <- deldir(coord$long, coord$lat) # computes cells
 # convert cell info to spatial data frame (polygons)
@@ -54,6 +66,10 @@ for (i in seq(along=polys)) {
   polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
 }
 SP <- SpatialPolygons(polys)
+SP <- intersect(SP, sps)
+for(x in 1:nrow(coord)){
+  SP@polygons[[x]]@ID <- as.character(x)
+}
 SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
 # tag polygons with location name
 SPDF@data$ID = coord$location
@@ -63,9 +79,26 @@ sapply(1:length(coord$location), function(x){
 })
 
 # Default coordinates that provide overview of entire campus
-defLong <- -78.9397541 # -78.9284148 W Campus
-defLati <-  36.0017932 #  36.0020571 W Campus
+defLong <- -78.9272544 # -78.9284148 W Campus
+defLati <- 36.0042458 #  36.0020571 W Campus
 zm <- 15 # default zoom level
+
+# Coordinates for West
+wLati <- 36.0003456
+wLong <- -78.939647
+wzm <- 16
+
+# Coordinates for East
+eLati <- 36.0063344
+eLong <- -78.9154213
+ezm <- 17
+
+# Coordinates for Central
+cLati <- 36.0030883
+cLong <- -78.9258819
+czm <- 17
+
+
 # Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
 p1 <- c(defLong, defLati)
 degScale = -3
@@ -122,19 +155,6 @@ for(i in 1:length(timeSteps)){
   paletteList[[i]] <- palette
 }
 
-# Default coordinates that provide overview of entire campus
-defLong <- -78.9284148 # -78.9397541 W Campus
-defLati <- 36.0020571 # 36.0017932 W Campus
-zm <- 14 # default zoom level
-# Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
-p1 <- c(defLong, defLati)
-degScale = -3
-p2 <- c(defLong + 10 ^ degScale, defLati)
-p3 <- c(defLong, defLati + 10 ^ degScale)
-# The Haversine formula calculates distances along a spherical surface.
-areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
-areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
-
 # app user interface
 ui <- fluidPage(
   
@@ -145,8 +165,9 @@ ui <- fluidPage(
       # input a time to show temporally close records on map
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
-      selectInput("select", "View", choices = 
-                    list("Population Density (area)" = 1, "Population Density (aps)" = 2, "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1) # Eventually would like to work, just here as an idea that could be implemented
+      selectInput("select", "View:", choices = list("Population Density (area)" = 1, "Population Density (aps)" = 2, 
+                                                   "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
+      radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All")
     ),
     
     mainPanel(
@@ -189,13 +210,14 @@ server <- function(input, output, session) {
   
   observe({
     #Filters for records within timeStep of the input time.
-    populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
     if(is.null(input$time) | is.null(input$timeStepSelection)){
       return()
     }
     if(!any(populationDensities$time.window == input$time)){
       return()
     }
+    populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
+    myPalette <- paletteList[[which(timeSteps == input$timeStepSelection)]]
     thisStep <- populationDensities %>%
       filter(time.window == input$time) %>% 
       filter(locations %in% include$poly)
@@ -223,12 +245,31 @@ server <- function(input, output, session) {
                   color = 'white',
                   opacity = 0.2,
                   fillOpacity = 0,
-                  fillColor = ~palette(thisStep$density)) %>%
-      addLegend(pal = paletteList[[which(timeSteps == input$timeStepSelection)]], 
+                  fillColor = ~myPalette(thisStep$density)) %>%
+      addLegend(pal = myPalette, 
                 values = populationDensities$density_area,
                 position = "topright",
                 title = "Unique Devices per 100 sq m")
     
+  })
+  
+  observe({
+    if(input$focus == "West"){
+      leafletProxy("map") %>% 
+        flyTo(wLong, wLati, wzm)
+    }
+    if(input$focus == "East"){
+      leafletProxy("map") %>% 
+        flyTo(eLong, eLati, ezm)
+    }
+    if(input$focus == "Central"){
+      leafletProxy("map") %>% 
+        flyTo(cLong, cLati, czm)
+    }
+    if(input$focus == "All"){
+      leafletProxy("map") %>% 
+        flyTo(defLong, defLati, zm)
+    }
   })
   
 }
