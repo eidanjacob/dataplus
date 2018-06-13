@@ -209,19 +209,25 @@ server <- function(input, output, session) {
   })
   
   observe({
+    print("you are reacting")
+    print(is.null(input$time))
+    print(is.null(input$timeStepSelection))
     #Filters for records within timeStep of the input time.
     if(is.null(input$time) | is.null(input$timeStepSelection)){
       return()
     }
+    populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
     if(!any(populationDensities$time.window == input$time)){
       return()
     }
-    populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
+    print("it died here")
     myPalette <- paletteList[[which(timeSteps == input$timeStepSelection)]]
+    print("no, it died here")
     thisStep <- populationDensities %>%
       filter(time.window == input$time) %>% 
       filter(locations %in% include$poly)
     
+    print("you did filtering")
     # Setting up for hover tooltips
     labels <-  sprintf("<strong>%s</strong><br/ >%g uniq macaddrs", # eventually would also like to list number of APs
                        thisStep$locations, # location
