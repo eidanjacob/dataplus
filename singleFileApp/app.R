@@ -213,10 +213,10 @@ server <- function(input, output, session) {
     if(is.null(input$time) | is.null(input$timeStepSelection)){
       return()
     }
+    populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
     if(!any(populationDensities$time.window == input$time)){
       return()
     }
-    populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
     myPalette <- paletteList[[which(timeSteps == input$timeStepSelection)]]
     thisStep <- populationDensities %>%
       filter(time.window == input$time) %>% 
