@@ -1,3 +1,4 @@
+
 # Load packages:
 # readr, readxl for data frame input
 # leaflet for mapping
@@ -25,6 +26,11 @@ coord <- read_csv("../locationsToCoordinates.csv")
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
 validLocations <- read_csv("../allAPs.csv") # aps <-> locations
 dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
+
+numAPs <- validLocations %>% # number of APs per location
+  group_by(location) %>% 
+  summarise(num = n())
+
 # splunkData <- read_csv("../eventData.csv")
 # 
 # # match aps to locations, merge for coordinates
@@ -41,7 +47,7 @@ dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
 # # use the new "flexible" ap variable to merge coordinates onto df
 # df <- merge(df, validLocations, by = "ap") # this is the slow step
 # write.csv(df, "../mergedData.csv")
- 
+
 df <- read_csv("../mergedData.csv")
 df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
@@ -53,8 +59,9 @@ sps = SpatialPolygons(list(ps))
 # remove out-of-bounds locations
 inBounds <- sapply(1:nrow(coord), function(x) {
   point.in.polygon(coord$long[x], coord$lat[x], unlist(dukeShape[,1]), unlist(dukeShape[,2]))
-  })
+})
 coord <- coord[inBounds == 1,]
+coord <- merge.data.frame(coord,numAPs)
 # calculating voronoi cells and converting to polygons to plot on map
 z <- deldir(coord$long, coord$lat) # computes cells
 # convert cell info to spatial data frame (polygons)
@@ -79,8 +86,8 @@ sapply(1:length(coord$location), function(x){
 })
 
 # Default coordinates that provide overview of entire campus
-defLong <- -78.9272544 # -78.9284148 W Campus
-defLati <- 36.0042458 #  36.0020571 W Campus
+defLong <- -78.9272544 # default longitude
+defLati <- 36.0042458 # default latitude
 zm <- 15 # default zoom level
 
 # Coordinates for West
@@ -141,7 +148,11 @@ for(i in 1:length(timeSteps)){
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
     # Calculate a measure of people / (100 sq meters) 
     densities_area <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, "pop" = locationBinnedPop$pop, "density_area" = densities_area, "time.window" = c(time.windowStart))
+    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, 
+                                  "pop" = locationBinnedPop$pop, 
+                                  "ap_num" = coord$num, 
+                                  "density_area" = densities_area, 
+                                  "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
     end.times[i] <- time.windowStart
     time.windowStart = time.windowStart + timeStep
@@ -166,7 +177,7 @@ ui <- fluidPage(
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
       selectInput("select", "View:", choices = list("Population Density (area)" = 1, "Population Density (aps)" = 2, 
-                                                   "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
+                                                    "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All")
     ),
     
@@ -223,8 +234,9 @@ server <- function(input, output, session) {
       filter(locations %in% include$poly)
     
     # Setting up for hover tooltips
-    labels <-  sprintf("<strong>%s</strong><br/ >%g uniq macaddrs", # eventually would also like to list number of APs
+    labels <-  sprintf("<strong>%s</strong><br/ >%g APs<br/ >%g uniq macaddrs", 
                        thisStep$locations, # location
+                       thisStep$ap_num, # number of APs
                        thisStep$pop) %>% # number of unique macaddrs 
       lapply(htmltools::HTML)
     
