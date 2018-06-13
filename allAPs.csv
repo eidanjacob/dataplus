@@ -5,12 +5,12 @@ APname,APnum,location
 7251-art-bldg-200j-c,00:42:68:af:65:18,1 Brodie
 7251-art-bldg-200k-h-c,c4:64:13:c3:0d:5b,1 Brodie
 7251-art-bldg-200u-h-c,c4:64:13:c3:1d:5c,1 Brodie
-7762facultyclub-13,c4:64:13:38:cf:4b,Faculty Club
+7762facultyclub-13,c4:64:13:38:cf:4b,FacultyClub
 1013-broad-st-back-office-1,7c:ad:74:50:23:b1,1013 Broad 
 1013-broad-st-front-office-1,64:12:25:07:ce:6f,1013 Broad 
-7762facultyclub-14,c4:64:13:5b:9e:aa,Faculty Club
-7762facultyclub-15,c4:64:13:76:61:f8,Faculty Club
-7762facultyclub-24-1,c4:64:13:2c:08:3f,Faculty Club
+7762facultyclub-14,c4:64:13:5b:9e:aa,FacultyClub
+7762facultyclub-15,c4:64:13:76:61:f8,FacultyClub
+7762facultyclub-24-1,c4:64:13:2c:08:3f,FacultyClub
 8067-lyndhurst-115-desk,28:94:0f:c1:13:b0,DocStudies
 8067-lyndhurst-apt-attic,c4:64:13:38:c2:01,DocStudies
 8067-lyndhurst-bridges-001-cab,c4:64:13:5b:a9:0d,DocStudies
@@ -21,13 +21,13 @@ APname,APnum,location
 8067-lyndhurst-l002-c,c4:64:13:76:49:6a,DocStudies
 8067-lyndhurst-l304-w,2c:54:2d:0a:34:bc,DocStudies
 7207-ark-101-w,2c:54:2d:0d:cb:8f,Ark
-7762facultyclub-24-2,c4:64:13:38:d0:c5,Faculty Club
-7762facultyclub-pumphouse-005,c4:64:13:76:65:4b,Faculty Club
+7762facultyclub-24-2,c4:64:13:38:d0:c5,FacultyClub
+7762facultyclub-pumphouse-005,c4:64:13:76:65:4b,FacultyClub
 dance-hull-st-1-c-1,c4:64:13:38:e4:07,DanceProgram
 dance-hull-st-2-c-1,c4:64:13:00:43:94,DanceProgram
 1515-hull-101-h-c,80:e0:1d:6a:69:04,DanceProgram 
 1515-hull-204-h-c,80:e0:1d:58:7f:18,DanceProgram 
-7762facultyclub-pumphouse-lap,c4:64:13:76:64:ce,Faculty Club
+7762facultyclub-pumphouse-lap,c4:64:13:76:64:ce,FacultyClub
 7171-1700-pace-aptc-w,00:c8:8b:c4:33:54,KAT 1700 Pace 
 7171-1700-pace-aptl-q,28:94:0f:c9:0b:33,KAT 1700 Pace 
 7171-1700-pace-aptl-w,00:c8:8b:e4:e1:ec,KAT 1700 Pace 
@@ -268,19 +268,19 @@ newman-off-w,00:5f:86:98:27:50,Catholic
 402oregon-102confrm-c,cc:46:d6:18:8c:28,402 Oregon 
 402oregon-108-c,00:42:68:5f:2d:c0,402 Oregon 
 406-oregon-103-h-c,c4:64:13:00:41:60,402 Oregon 
-406-swift-basmt,28:94:0f:c9:0a:c6,MuslimLIfe 
-406-swift-prayer-rm,2c:54:2d:0d:e1:0a,MuslimLIfe 
-408-swift-basement,c4:64:13:38:c0:ec,MuslimLIfe 
+406-swift-basmt,28:94:0f:c9:0a:c6,MuslimLife 
+406-swift-prayer-rm,2c:54:2d:0d:e1:0a,MuslimLife 
+408-swift-basement,c4:64:13:38:c0:ec,MuslimLife 
 410-swift-basement,c4:64:13:38:bb:b9,TropicalStud 
 410-swift-outhouse-w,2c:54:2d:a4:19:25,TropicalStud 
 substation-4-garage-w,7c:ad:74:50:2b:3f,410 Towerview
 substation-4-joes-office,64:9e:f3:8e:f8:de,410 Towerview
 dorisduke-patio,2c:54:2d:13:1f:e0,420 Anderson
-7107-dorisduke-106-w,7c:ad:74:28:50:c7,420 Anderson 
-7107-dorisduke-119-w,2c:54:2d:12:fa:7e,420 Anderson 
-7107-dorisduke-copyroom-w,2c:54:2d:0d:f2:2c,420 Anderson 
-7107-dorisduke-eventhall-1-w,7c:ad:74:50:24:aa,420 Anderson 
-7107-dorisduke-giftshop-o-w,7c:ad:74:18:a6:27,420 Anderson 
+7107-dorisduke-106-w,7c:ad:74:28:50:c7,420 Anderson
+7107-dorisduke-119-w,2c:54:2d:12:fa:7e,420 Anderson
+7107-dorisduke-copyroom-w,2c:54:2d:0d:f2:2c,420 Anderson
+7107-dorisduke-eventhall-1-w,7c:ad:74:50:24:aa,420 Anderson
+7107-dorisduke-giftshop-o-w,7c:ad:74:18:a6:27,420 Anderson
 7722-614chapel-105-w,00:c8:8b:c4:32:d0,614 Chapel
 7722-614chapel-111-w,7c:ad:74:28:59:9d,614 Chapel
 7722-614chapel-117-w,7c:ad:74:84:fe:f3,614 Chapel
@@ -1528,10 +1528,10 @@ tennis-entrance-c,00:42:68:87:ca:58,Card
 7701-chapel-tc-rm-w,bc:16:65:16:5b:a3,Chapel
 chillerplant-1-control-rm,84:b8:02:ef:20:88,Chiller1
 chiller-plant2-bsmt-1-c,c4:64:13:76:65:23,WestSteamPlant
-chiller-plant2-bsmt-2-w,7c:ad:74:84:fe:da,Chiller3
-chiller-plant2-bsmt-brk-rm,c4:64:13:5b:8c:af,Chiller4
-chiller-plant2-tc-rm-w,2c:54:2d:0d:ce:ab,Chiller5
-chiller-plant2-utility-shop-c,7c:ad:74:50:24:79,Chiller6
+chiller-plant2-bsmt-2-w,7c:ad:74:84:fe:da,WestSteamPlant
+chiller-plant2-bsmt-brk-rm,c4:64:13:5b:8c:af,WestSteamPlant
+chiller-plant2-tc-rm-w,2c:54:2d:0d:ce:ab,WestSteamPlant
+chiller-plant2-utility-shop-c,7c:ad:74:50:24:79,WestSteamPlant
 7735-ciemas-1313a-h-c,00:42:68:83:6f:1c,Ciemas
 7735-ciemas-1345b-h-c,c4:64:13:11:31:fe,Ciemas
 7735-ciemas-1361-l-w,7c:ad:74:fb:da:62,Ciemas
