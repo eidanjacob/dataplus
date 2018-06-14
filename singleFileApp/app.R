@@ -130,6 +130,7 @@ popDensityList <- list()
 paletteList <- list()
 end.times <- rep(end.time, length(timeSteps))
 
+
 for(i in 1:length(timeSteps)){
   timeStep <- timeSteps[i]
   # Bin populations, calculate densities at each timestep, and cache for future plotting
@@ -169,8 +170,13 @@ for(i in 1:length(timeSteps)){
   palette_aps  <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 2))$info)
   palette_both <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 3))$info)
   palette_raw  <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 4))$info)
+  palette_area_log <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 1))$info+1))
+  palette_aps_log  <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 2))$info+1))
+  palette_both_log <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 3))$info+1))
+  palette_raw_log  <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 4))$info+1))
   
-  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw)
+  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw,
+                              palette_area_log, palette_aps_log, palette_both_log, palette_raw_log)
   
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
@@ -192,9 +198,10 @@ ui <- fluidPage(
       # input a time to show temporally close records on map
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
-      selectInput("select", "View:", choices = list("Population Density (area)" = 1, "Population Density (aps)" = 2, 
+      selectInput("select", "View:", choices = c("Population Density (area)" = 1, "Population Density (aps)" = 2, 
                                                     "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
-      radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All")
+      radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All"),
+      checkboxInput("log", "Log Scale", value = FALSE)
     ),
     
     mainPanel(
@@ -244,18 +251,19 @@ server <- function(input, output, session) {
     if(!any(populationDensities$time.window == input$time)){
       return()
     }
-    myPaletteList <- paletteList[[which(timeSteps == input$timeStepSelection)]]
-    print(myPaletteList)
-    myPalette <- myPaletteList[[as.numeric(input$select)]]
-    print(input$select)
-    print(myPalette)
     thisStep <- populationDensities %>%
       filter(time.window == input$time) %>% 
       filter(location %in% include$poly) %>%
-      filter(type == input$select)
-    
+      filter(type == as.numeric(input$select))
+
+    myPaletteList <- paletteList[[unname(which(timeSteps == input$timeStepSelection))]]
+    myPalette <- myPaletteList[[as.numeric(input$select)]]
+    if(input$log){
+      thisStep$info <- log(thisStep$info + 1)
+      myPalette <- myPaletteList[[as.numeric(input$select) + length(myPaletteList)/2]]
+    }
     # Setting up for hover tooltips
-    labels <- sprintf("<strong>%s</strong><br/ >%g APs<br/ >%g Value",
+    labels <- sprintf("<strong>%s</strong><br/ >%g APs<br/ >%g value",
                       thisStep$location, # location
                       thisStep$ap_num,
                       thisStep$info) %>% # plotted value
@@ -279,12 +287,16 @@ server <- function(input, output, session) {
                   color = 'white',
                   opacity = 0.2,
                   fillColor = ~myPalette(thisStep$info),
-                  fillOpacity = 0) 
+                  fillOpacity = 0)
+    legendVals <- (populationDensities %>% filter(type == as.numeric(input$select)))$info
+    if(input$log){
+      legendVals <- log(1 + legendVals)
+    }
     leafletProxy("map") %>%
       addLegend(pal = myPalette, 
-                values = populationDensities$info,
+                values = legendVals,
                 position = "topright",
-                title = legendTitles[input$select])
+                title = legendTitles[as.numeric(input$select)])
     
   })
   
