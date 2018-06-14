@@ -62,6 +62,7 @@ inBounds <- sapply(1:nrow(coord), function(x) {
 })
 coord <- coord[inBounds == 1,]
 coord <- merge.data.frame(coord,numAPs)
+N = nrow(coord)
 # calculating voronoi cells and converting to polygons to plot on map
 z <- deldir(coord$long, coord$lat) # computes cells
 # convert cell info to spatial data frame (polygons)
@@ -146,12 +147,17 @@ for(i in 1:length(timeSteps)){
     locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
     # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
-    # Calculate a measure of people / (100 sq meters) 
-    densities_area <- sapply(1:nrow(locationBinnedPop), function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    densitiesToSave <- data.frame("locations" = locationBinnedPop$location, 
-                                  "pop" = locationBinnedPop$pop, 
+    # Calculate a measure of people / (100 sq meters)
+    densities_area <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
+    densities_aps  <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / coord$num[x]})
+    densities_both <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area / areaConvert / coord$num[x]})
+    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop)
+    type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N))
+    densitiesToSave <- data.frame("location" = locationBinnedPop$location, 
+                                  #"pop" = locationBinnedPop$pop, 
                                   "ap_num" = coord$num, 
-                                  "density_area" = densities_area, 
+                                  "info" = info,
+                                  "type" = type,
                                   "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
     end.times[i] <- time.windowStart
@@ -159,12 +165,22 @@ for(i in 1:length(timeSteps)){
   }
   
   # setting up for chloropleth
-  palette <- colorNumeric("YlOrRd", populationDensities$density_area)
+  palette_area <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 1))$info)
+  palette_aps  <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 2))$info)
+  palette_both <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 3))$info)
+  palette_raw  <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 4))$info)
+  
+  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw)
   
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
-  paletteList[[i]] <- palette
+  paletteList[[i]] <- thisStepPaletteList
 }
+
+legendTitles <- c("Population Density (area)",
+                  "Population Density (aps)", 
+                  "Population Density (both)",
+                  "Population (raw count)")
 
 # app user interface
 ui <- fluidPage(
@@ -228,16 +244,21 @@ server <- function(input, output, session) {
     if(!any(populationDensities$time.window == input$time)){
       return()
     }
-    myPalette <- paletteList[[which(timeSteps == input$timeStepSelection)]]
+    myPaletteList <- paletteList[[which(timeSteps == input$timeStepSelection)]]
+    print(myPaletteList)
+    myPalette <- myPaletteList[[as.numeric(input$select)]]
+    print(input$select)
+    print(myPalette)
     thisStep <- populationDensities %>%
       filter(time.window == input$time) %>% 
-      filter(locations %in% include$poly)
+      filter(location %in% include$poly) %>%
+      filter(type == input$select)
     
     # Setting up for hover tooltips
-    labels <-  sprintf("<strong>%s</strong><br/ >%g APs<br/ >%g uniq macaddrs", 
-                       thisStep$locations, # location
-                       thisStep$ap_num, # number of APs
-                       thisStep$pop) %>% # number of unique macaddrs 
+    labels <- sprintf("<strong>%s</strong><br/ >%g APs<br/ >%g Value",
+                      thisStep$location, # location
+                      thisStep$ap_num,
+                      thisStep$info) %>% # plotted value
       lapply(htmltools::HTML)
     
     # Adds polygons and colors by population density.
@@ -249,19 +270,21 @@ server <- function(input, output, session) {
                   weight = 1,
                   color = 'black',
                   fillOpacity = .5,
-                  fillColor = ~palette(thisStep$density),
-                  label = labels) %>%
+                  fillColor = ~myPalette(thisStep$info),
+                  label = labels)
+    leafletProxy("map") %>%
       addPolygons(data = SPDF[!SPDF@data$ID %in% thisStep$location, ], # draws the unincluded polygons
                   layerId = coord$location[!coord$location %in% thisStep$location],
                   weight = 1.5,
                   color = 'white',
                   opacity = 0.2,
-                  fillOpacity = 0,
-                  fillColor = ~myPalette(thisStep$density)) %>%
+                  fillColor = ~myPalette(thisStep$info),
+                  fillOpacity = 0) 
+    leafletProxy("map") %>%
       addLegend(pal = myPalette, 
-                values = populationDensities$density_area,
+                values = populationDensities$info,
                 position = "topright",
-                title = "Unique Devices per 100 sq m")
+                title = legendTitles[input$select])
     
   })
   
