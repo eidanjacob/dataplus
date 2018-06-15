@@ -1,0 +1,45 @@
+---
+title: "perkins"
+author: "Eidan Jacob"
+date: "June 15, 2018"
+output: html_document
+---
+
+Let's map Perkins!
+
+```{r, warning = FALSE, message = FALSE}
+library(readr)
+# read in csvs of coordinates (pixels), obtained using tool on mobilefish.com
+basement_aps <- read_csv("./csvs/perkins_basement.csv")
+basement_walls <- read_csv("./csvs/perkins_basement_walls.csv")
+f1_aps <- read_csv("./csvs/perkins_1.csv")
+f1_walls <- read_csv("./csvs/perkins_1_walls.csv")
+f2_aps <- read_csv("./csvs/perkins_2.csv")
+f2_walls <- read_csv("./csvs/perkins_2_walls.csv")
+f3_aps <- read_csv("./csvs/perkins_3.csv")
+f3_walls <- read_csv("./csvs/perkins_3_walls.csv")
+frames_list <- list(basement_aps, f1_aps, f2_aps, f3_aps, basement_walls, f1_walls, f2_walls, f3_walls)
+# this function transforms the coordinates into feet, using the coordinate system on the maps supplied by OIT
+coordinate_transform <- function(info){
+  reference <- info[1:2,]
+  info <- info[-1:-2,]
+  # this part abuses the lm() and predict.lm() functions - it runs a linear regression on the two reference points to calculate the appropriate coordinate transformation.
+  xreg <- lm(transX ~ rawX, data = reference)
+  yreg <- lm(transY ~ rawY, data = reference)
+  info$transX <- predict.lm(xreg, info)
+  info$transY <- predict.lm(yreg, info)
+  return(info)
+}
+transformed_list <- lapply(frames_list, coordinate_transform)
+
+```
+
+Basement:
+
+```{r, warning = FALSE, message= FALSE}
+library(ggplot2)
+baps <- transformed_list[[1]]
+bwal <- transformed_list[[5]]
+bwal <- rbind(bwal, bwal[1,])
+ggplot(aes(transX, transY), data = baps) + geom_point() + geom_path(aes(transX, transY), data = bwal)
+```
