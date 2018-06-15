@@ -1,4 +1,3 @@
-
 # Load packages:
 # readr, readxl for data frame input
 # leaflet for mapping
@@ -118,7 +117,7 @@ areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
 
 # ------------------------------
 # Mess with these numbers if you want.
-timeSteps = c("1hr" = 60*60, "2hr" = 2*60*60, "4 hr" = 4*60*60) # in seconds
+timeSteps = c("30min" = 60*30, "2hr" = 2*60*60, "4 hr" = 4*60*60) # in seconds
 # timeSteps = c("4 hr" = 4*60*60)
 delay = 1500 # in milliseconds
 # ------------------------------
@@ -126,16 +125,28 @@ delay = 1500 # in milliseconds
 start.time = (min(df$`_time`))
 end.time = (max(df$`_time`))
 
+# Filtering for all macaddrs in startingLocation within an hour of the start time
+# maybe can later be enabled with a radioButton or something
+startingLocation <- "Perkins"
+inte <- interval(start.time, start.time + 60 * 30)
+macaddrInLoc <- df %>% 
+  filter(`_time` %within% inte) %>% 
+  filter(location.y == startingLocation)
+macaddrInLoc <- unique(macaddrInLoc$macaddr)
+df <- df %>% filter(macaddr %in% macaddrInLoc)
+
 popDensityList <- list()
 paletteList <- list()
-end.times <- rep(end.time, length(timeSteps))
+macsToLocList <- list()
 
+end.times <- rep(end.time, length(timeSteps))
 
 for(i in 1:length(timeSteps)){
   timeStep <- timeSteps[i]
   # Bin populations, calculate densities at each timestep, and cache for future plotting
   time.windowStart = start.time # time.window for selection
   populationDensities <- NULL
+  macsToLoc <- NULL
   
   while(end.time > time.windowStart){
     
@@ -148,19 +159,30 @@ for(i in 1:length(timeSteps)){
     locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
     # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
+    
     # Calculate a measure of people / (100 sq meters)
     densities_area <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
     densities_aps  <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / coord$num[x]})
     densities_both <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area / areaConvert / coord$num[x]})
     info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop)
     type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N))
-    densitiesToSave <- data.frame("location" = locationBinnedPop$location, 
-                                  #"pop" = locationBinnedPop$pop, 
+    densitiesToSave <- data.frame("location" = locationBinnedPop$location,
+                                  #"pop" = locationBinnedPop$pop,
                                   "ap_num" = coord$num, 
                                   "info" = info,
                                   "type" = type,
                                   "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
+    
+    # For each macaddr, keep track of where it currently is
+    macs <- data.frame("macaddr" = thisStep$macaddr,
+                       "location" = thisStep$location.y,
+                       "long" = thisStep$long,
+                       "lat" = thisStep$lat,
+                       "time.window" = c(time.windowStart))
+    macs <- macs[order(macs$macaddr), ]
+    macsToLoc <- rbind(macsToLoc, macs)
+    
     end.times[i] <- time.windowStart
     time.windowStart = time.windowStart + timeStep
   }
@@ -181,7 +203,10 @@ for(i in 1:length(timeSteps)){
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
   paletteList[[i]] <- thisStepPaletteList
+  macsToLocList[[i]] <- macsToLoc
 }
+
+
 
 legendTitles <- c("Population Density (area)",
                   "Population Density (aps)", 
@@ -199,9 +224,10 @@ ui <- fluidPage(
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
       selectInput("select", "View:", choices = c("Population Density (area)" = 1, "Population Density (aps)" = 2, 
-                                                    "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
+                                                 "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All"),
-      checkboxInput("log", "Log Scale", value = FALSE)
+      checkboxInput("log", "Log Scale", value = FALSE),
+      checkboxInput("flow", "Track flow", value = FALSE)
     ),
     
     mainPanel(
@@ -248,14 +274,20 @@ server <- function(input, output, session) {
       return()
     }
     populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
+    currMacs <- macsToLocList[[which(timeSteps == input$timeStepSelection)]]
     if(!any(populationDensities$time.window == input$time)){
       return()
     }
+    
+    currMacs <- currMacs %>% 
+      filter(time.window == input$time) %>% 
+      filter(location %in% include$poly) 
+    
     thisStep <- populationDensities %>%
       filter(time.window == input$time) %>% 
       filter(location %in% include$poly) %>%
       filter(type == as.numeric(input$select))
-
+    
     myPaletteList <- paletteList[[unname(which(timeSteps == input$timeStepSelection))]]
     myPalette <- myPaletteList[[as.numeric(input$select)]]
     if(input$log){
@@ -297,6 +329,33 @@ server <- function(input, output, session) {
                 values = legendVals,
                 position = "topright",
                 title = legendTitles[as.numeric(input$select)])
+    
+    
+    
+    uniqMacs <- unique(macs$macaddr)
+    uniqMacs <- as.character(uniqMacs)
+    for(i in 1:length(uniqMacs)) { # draw each macaddr's movement line -- current bug: will crash app if clicking on a line
+      macs <- currMacs %>% 
+        filter(macaddr == uniqMacs[[i]])
+      macLocs <- macs %>% 
+        group_by(location) %>%
+        summarise(num = n())
+      if(length(macLocs$location) == 1) { # draws a circle if there is no movement -- still need to clear map after drawing
+        leafletProxy("map") %>%
+          addCircleMarkers(lng = macs$long,
+                           lat = macs$lat,
+                           radius = 3,
+                           weight = 2,
+                           opacity = 0.3) # LABELS CRASHES APP
+      } else if(length(macs) != 0) { # drawing movement lines -- consider dealing with east to west stretches
+        leafletProxy("map") %>% 
+          addPolylines(lng = macs$long, 
+                       lat = macs$lat,
+                       weight = 2,
+                       opacity = 0.3) # LABELS CRASHES APP
+      } 
+    }
+    
     
   })
   
