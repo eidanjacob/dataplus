@@ -119,7 +119,7 @@ areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
 # Mess with these numbers if you want.
 timeSteps = c("1hr" = 60*60, "2hr" = 2*60*60, "4hr" = 4*60*60) # in seconds
 # timeSteps = c("4 hr" = 4*60*60)
-delay = 1500 # in milliseconds
+delay = 1800 # in milliseconds
 # ------------------------------
 
 start.time = (min(df$`_time`))
@@ -129,7 +129,7 @@ end.time = (max(df$`_time`))
 # to limit the size of the data set and prevent RStudio from crashing
 # maybe can later be enabled with a radioButton or something
 startingLocation <- "Perkins"
-inte <- interval(start.time, start.time + 60 * 60)
+inte <- interval(start.time, start.time + 60 * 30)
 macaddrInLoc <- df %>%
   filter(`_time` %within% inte) %>%
   filter(location.y == startingLocation)
@@ -358,7 +358,7 @@ server <- function(input, output, session) {
       # have known to have stopped at the location at that particular time. Sometimes
       # a good amount of people have also left that place from that time, although you see
       # a much bluer dot, and the amount of people from time A and B are about the same.
-      
+      # 
       # Notes
       # already tried addLayersControl
       # probably a better way to make the checkboxes
@@ -368,6 +368,9 @@ server <- function(input, output, session) {
       uniqMacs <- as.character(uniqMacs)
       # looping through each macaddr to determine its movement
       for(i in 1:length(uniqMacs)) { 
+        if(i == 50) { # to prevent stuff from crashing
+          break
+        }
         # filtering to find each location a macaddr has visited
         macs <- currMacs %>% 
           filter(macaddr == uniqMacs[[i]]) 
@@ -381,9 +384,9 @@ server <- function(input, output, session) {
             addCircles(lng = macs$long,
                        lat = macs$lat,
                        group = "severals",
-                       radius = 3,
                        weight = 2,
-                       opacity = 0.3)
+                       opacity = 0.3,
+                       color = 'green')
         # drawing movement lines
         } else if(length(macs) != 0) { 
           leafletProxy("map") %>% 
@@ -391,7 +394,12 @@ server <- function(input, output, session) {
                          lat = macs$lat,
                          group = "severals",
                          weight = 2,
-                         opacity = 0.3) %>% 
+                         opacity = 0.3,
+                         highlightOptions = highlightOptions(
+                           weight = 5,
+                           color = 'black',
+                           fillOpacity = 1,
+                           bringToFront = TRUE)) %>% 
             addCircles(lng = macs$long[1], # red is from
                        lat = macs$lat[1],
                        group = "severals",
@@ -439,7 +447,12 @@ server <- function(input, output, session) {
                        lat = macs$lat,
                        group = "singles",
                        weight = 5,
-                       opacity = 0.5) %>% 
+                       opacity = 0.5,
+                       highlightOptions = highlightOptions(
+                         weight = 8,
+                         color = 'black',
+                         fillOpacity = 1,
+                         bringToFront = TRUE)) %>% 
           addCircles(lng = macs$long[1], # red is from
                      lat = macs$lat[1],
                      group = "singles",
