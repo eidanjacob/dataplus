@@ -5,6 +5,7 @@
 # Requires coordinate data
 require(dplyr)
 require(geosphere)
+require(lubridate)
 speedR <- function(mac, data){
   unsorted <- data[data$macaddr == mac,]
   sorted <- unsorted[ order(unsorted$`_time`), ]
@@ -16,7 +17,7 @@ speedR <- function(mac, data){
   speeds <- sapply(1:(n-1), function(i){
     a = sorted$`_time`[i+1]
     b = sorted$`_time`[i]
-    timediff = a - b
+    timediff = difftime(a, b)
     if(timediff <= 0){
       return(Inf)
       next
@@ -24,7 +25,7 @@ speedR <- function(mac, data){
     c1 <- c(sorted$lat[i], sorted$long[i])
     c2 <- c(sorted$lat[i+1], sorted$long[i+1])
     distance <- distHaversine(c1, c2)
-    return(distance / as.double(timediff))
+    return(distance / as.numeric(timediff, units = "secs"))
   })
   return(list(speeds, sorted))
 }
