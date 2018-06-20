@@ -60,9 +60,25 @@ SPDFlist <- lapply(0:3, function(i){
 
 
 ui <- fluidPage(
+  titlePanel("Perkins Library Wireless Data"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      #
+    ),
+    
+    mainPanel(
+      # ideas for this thing: tween chloropleth, track individual macaddrs over time (filter to a small number for readability)
+      plotOutput("plot")
+    )
+  )
 )
 
 server <- function(input, output) {
+  output$plot <- renderPlot({
+    bah <- fortify(SPDFlist[[1]], region = "ID")
+    ggplot(data = bah, aes(x = long, y = lat)) + geom_polygon()
+  })
 }
 
 # Run the application 
