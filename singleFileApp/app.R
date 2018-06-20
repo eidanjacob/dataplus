@@ -125,16 +125,18 @@ delay = 1800 # in milliseconds
 start.time = (min(df$`_time`))
 end.time = (max(df$`_time`))
 
-# Filtering for all macaddrs in startingLocation within an hour of the start time
+# Filtering for all macaddrs that moved/was registered within a certain period of the start time
 # to limit the size of the data set and prevent RStudio from crashing
-# maybe can later be enabled with a radioButton or something
-startingLocation <- "Perkins"
-inte <- interval(start.time, start.time + 60 * 30)
+# It then samples num random macaddrs
+period <- 60 * 10
+num <- 200
+inte <- interval(start.time, start.time + period)
 macaddrInLoc <- df %>%
-  filter(`_time` %within% inte) %>%
-  filter(location.y == startingLocation)
+  filter(`_time` %within% inte)
 macaddrInLoc <- unique(macaddrInLoc$macaddr)
+#macaddrInLoc <- sample(macaddrInLoc, num)
 df <- df %>% filter(macaddr %in% macaddrInLoc)
+currMacs <- NULL # just to initialize so it exists globally
 
 popDensityList <- list()
 paletteList <- list()
@@ -229,7 +231,12 @@ ui <- fluidPage(
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All"),
       checkboxInput("log", "Log Scale", value = FALSE),
       checkboxInput("flow", "Track flow", value = FALSE),
-      checkboxInput("track", "Track Single Macaddr", value = FALSE)
+      checkboxInput("track", "Track Single Macaddr", value = FALSE),
+      conditionalPanel( 
+        condition = "input.track",
+        textInput("mac", "Track", value = "Enter macaddr..."),
+        actionButton("submit", "Submit")
+      )
     ),
     
     mainPanel(
@@ -241,19 +248,33 @@ ui <- fluidPage(
 # app backend
 server <- function(input, output, session) {
   
-  # list of locations to be included
-  include <- reactiveValues(poly = coord$location)
+  include <- reactiveValues(poly = coord$location, # list of locations to be included
+                            singleMac = "00:b3:62:16:56:05") # default macaddr to track
   
   # Seeing if a polygon was clicked and hiding/showing it as needed
   observeEvent(input$map_shape_click, {
-    clickedLoc <- input$map_shape_click$'id'
-    if(clickedLoc %in% include$poly) {
-      include$poly <- include$poly[!include$poly %in% clickedLoc] # taking out of included polygons
+    clickedGroup <- input$map_shape_click$'group'
+    clickedID <- input$map_shape_click$'id'
+    if(clickedGroup == "shapes") {
+      if(clickedID %in% include$poly) {
+        include$poly <- include$poly[!include$poly %in% clickedID] # taking out of included polygons
+      }
+      else {
+        include$poly <- c(include$poly, clickedID) # putting it back into included polygons
+        include$poly <- sort(include$poly) # need to sort so that shapes drawn have correct id
+      }
     }
-    else {
-      include$poly <- c(include$poly, clickedLoc) # putting it back into included polygons
-      include$poly <- sort(include$poly) # need to sort so that shapes drawn have correct id
+    else if(clickedGroup == "severals") {
+      print(clickedID)
+      macLocs <- currMacs %>% 
+        filter(macaddr == clickedID) %>%
+        filter(time.window == input$time)
+      View(macLocs)
     }
+  })
+  
+  observeEvent(input$submit, {
+    include$singleMac <- input$mac
   })
   
   # Creates the initial map
@@ -276,13 +297,13 @@ server <- function(input, output, session) {
       return()
     }
     populationDensities <- popDensityList[[which(timeSteps == input$timeStepSelection)]]
-    currMacs <- macsToLocList[[which(timeSteps == input$timeStepSelection)]]
+    currMacs <<- macsToLocList[[which(timeSteps == input$timeStepSelection)]]
     if(!any(populationDensities$time.window == input$time)){
       return()
     }
     
     if(input$flow | input$track) {
-      currMacs <- currMacs %>% 
+      currMacs <<- currMacs %>% 
         filter(time.window == input$time) %>% 
         filter(location %in% include$poly) 
     }
@@ -341,15 +362,13 @@ server <- function(input, output, session) {
     if(input$flow) {
       
       ##################
-      # KNOWN BUGS:
-      # app crashes when clicking on line -> input$map_shape_click detects click -> Warning: Error in if: argument is of length zero
-      # cannot add labels as the app will crash -> processing overload as there are many overlaps
-      
       # IDEAS/NEXT
       # Hide East to West lines <- def do this
       # Would like to make labels that show number of macaddrs moving
       # Cluster lines/make more obvious that more blue == more people
-      #
+      # Consider the green circles to make into clusters instead ?
+      # Search bar that highlights a macaddr's path if present, highlights polygon of last known location otherwise.
+      # 
       # Currently, it's kind of cool to look at which places have a lot of people coming and
       # going at a given time, but what it doesn't show is if people have been in that place
       # for a long time, and are now just leaving, or if they're just passing through.
@@ -358,22 +377,23 @@ server <- function(input, output, session) {
       # have known to have stopped at the location at that particular time. Sometimes
       # a good amount of people have also left that place from that time, although you see
       # a much bluer dot, and the amount of people from time A and B are about the same.
-      # 
-      # Notes
-      # already tried addLayersControl
-      # probably a better way to make the checkboxes
       ##################
       
       uniqMacs <- unique(currMacs$macaddr)
       uniqMacs <- as.character(uniqMacs)
+      
       # looping through each macaddr to determine its movement
       for(i in 1:length(uniqMacs)) { 
-        if(i == 50) { # to prevent stuff from crashing
+        if(i == num) { # to prevent stuff from crashing
           break
         }
         # filtering to find each location a macaddr has visited
         macs <- currMacs %>% 
           filter(macaddr == uniqMacs[[i]]) 
+        
+        macLabels <- sprintf("macaddr: %s",
+                             macs$macaddr) %>%
+          lapply(htmltools::HTML)
         
         macLocs <- macs %>% 
           group_by(location) %>%
@@ -383,18 +403,22 @@ server <- function(input, output, session) {
           leafletProxy("map") %>% 
             addCircles(lng = macs$long,
                        lat = macs$lat,
+                       layerId = macs$macaddr,
                        group = "severals",
                        weight = 2,
                        opacity = 0.3,
+                       label = macLabels,
                        color = 'green')
-        # drawing movement lines
+          # drawing movement lines
         } else if(length(macs) != 0) { 
           leafletProxy("map") %>% 
             addPolylines(lng = macs$long, 
                          lat = macs$lat,
+                         layerId = macs$macaddr,
                          group = "severals",
                          weight = 2,
                          opacity = 0.3,
+                         label = macLabels,
                          highlightOptions = highlightOptions(
                            weight = 5,
                            color = 'black',
@@ -420,31 +444,35 @@ server <- function(input, output, session) {
     if(input$track) {
       
       ##########
-      # Eventually would like to not hardcode macaddr -- maybe have a randomize button?
       # Note to self: look at code and see how to do it better
       # Would like the future lines to disappear when going back in time
       ##########
       
-      macs <- currMacs %>% 
-        filter(macaddr == "5c:f7:e6:bb:39:51") %>% 
+      # leafletProxy("map") %>%
+      #   clearGroup("singles")
+
+      macTime <- currMacs %>% 
+        filter(macaddr == include$singleMac) %>% 
         filter(time.window <= input$time)
       
-      macLocs <- macs %>% 
+      macLocs <- macTime %>% 
         group_by(location) %>%
         summarise(num = n())
+      # draws a circle if there is no movement
       if(length(macLocs$location) == 1) { 
         leafletProxy("map") %>% 
-          addCircles(lng = macs$long,
-                     lat = macs$lat,
+          addCircles(lng = macTime$long,
+                     lat = macTime$lat,
                      group = "singles",
                      radius = 3,
                      weight = 2,
-                     opacity = 0.3)
+                     opacity = 0.3,
+                     color = 'green')
         # drawing movement lines
-      } else if(length(macs) != 0) { 
+      } else if(length(macTime) != 0) { 
         leafletProxy("map") %>% 
-          addPolylines(lng = macs$long, 
-                       lat = macs$lat,
+          addPolylines(lng = macTime$long, 
+                       lat = macTime$lat,
                        group = "singles",
                        weight = 5,
                        opacity = 0.5,
@@ -453,14 +481,14 @@ server <- function(input, output, session) {
                          color = 'black',
                          fillOpacity = 1,
                          bringToFront = TRUE)) %>% 
-          addCircles(lng = macs$long[1], # red is from
-                     lat = macs$lat[1],
+          addCircles(lng = macTime$long[1], # red is from
+                     lat = macTime$lat[1],
                      group = "singles",
                      weight = 2,
                      opacity = 0.3,
                      color = 'red') %>% 
-          addCircles(lng = macs$long[length(macs$long)], # blue is to
-                     lat = macs$lat[length(macs$lat)],
+          addCircles(lng = macTime$long[length(macTime$long)], # blue is to
+                     lat = macTime$lat[length(macTime$lat)],
                      group = "singles",
                      weight = 2,
                      opacity = 0.3,
