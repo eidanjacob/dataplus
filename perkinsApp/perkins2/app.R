@@ -9,6 +9,8 @@ library(deldir)
 library(sp)
 library(rgeos)
 library(raster)
+library(leaflet)
+library(plyr)
 
 ap_xy <- read_csv("../perkins_aps")
 walls <- read_csv("../perkins_walls")
@@ -44,20 +46,39 @@ SPDFlist <- lapply(0:3, function(i){
   SP <- SpatialPolygons(polys)
   SP <- intersect(SP, sps)
   for(x in 1:nrow(aps[aps$floor == i,])){
-    SP@polygons[[x]]@ID <- as.character(x)
+    SP@polygons[[x]]@id <- as.character(x)
   }
   SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(
     x = aps[aps$floor == i,"transX"], 
     y = aps[aps$floor == i,"transY"]))
   # tag polygons with ap name
-  SPDF@data$ID = as.character(aps[aps$floor == i, "ap"])
+  SPDF@data$id = as.character(aps[aps$floor == i, "ap"])
   sapply(1:length(aps[aps$floor == i, "ap"]), function(x){
-    SPDF@polygons[[x]]@ID <- as.character(aps[aps$floor == i, "ap"][x])
+    SPDF@polygons[[x]]@id <- as.character(aps[aps$floor == i, "ap"][x])
     SPDF <<- SPDF
   })
   return(SPDF)
 })
 
+binnedTable <- data.frame()
+startTime <- min(events$`_time`)
+endTime <- max(events$`_time`)
+timeStep <- 3600
+
+while(startTime < endTime){
+  
+  # Filter for time interval
+  selInt = interval(startTime, startTime + timeStep)
+  thisStep <- events %>%
+    filter(`_time` %within% selInt)
+  
+  # Bin to AP
+  numMACs <- sapply(aps$ap, function(i) {nrow(thisStep %>% filter(ap == i))})
+  binnedTable <- rbind(binnedTable, data.frame(macs = numMACs, ap = aps$ap, time = c(startTime)))
+  startTime <- startTime + timeStep
+}
+
+pal <- colorNumeric("YlOrRd", binnedTable$macs)
 
 ui <- fluidPage(
   titlePanel("Perkins Library Wireless Data"),
@@ -76,7 +97,8 @@ ui <- fluidPage(
 
 server <- function(input, output) {
   output$plot <- renderPlot({
-    bah <- fortify(SPDFlist[[1]], region = "ID")
+    f <- fortify(SPDFlist[[1]], region = "id")
+    bah <- join(f, SPDFlist[[1]]@data, by = "id")
     ggplot(data = bah, aes(x = long, y = lat)) + geom_polygon()
   })
 }
