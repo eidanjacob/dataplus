@@ -11,6 +11,7 @@ library(ggplot2)
 
 wallsdf <- NULL
 apsdf <- NULL
+eventsdf <- NULL
 
 ui <- fluidPage(
   
@@ -28,25 +29,31 @@ ui <- fluidPage(
                         )
                       )
              ),
-             tabPanel("Visualizations",
-                      uiOutput("plotList"))
+             tabPanel("Confirm Upload",
+                      uiOutput("plotList"),
+                      actionButton("plotsOk", "Looking Good")
+             ),
+             tabPanel("Summary",
+                      wellPanel(tableOutput("summaryTable"))),
+             tabPanel("Charts")
   )
 )
 
 server <- function(input, output) {
   options(shiny.maxRequestSize=1024^4)
-  hideTab("tabs", "Visualizations")
+  hideTab("tabs", "Confirm Upload")
+  hideTab("tabs", "Charts")
   observeEvent(input$read, {
-    hideTab("tabs", "Visualizations")
+    hideTab("tabs", "Confirm Upload")
     # The user has indicated they are ready to proceed. Read the submitted data frames and output diagnostics.
     req(input$shape)
     req(input$aps)
     req(input$events)
     tryCatch(
       {
-        wallsdf <- read_csv(input$shape$datapath)
-        apsdf <- read_csv(input$aps$datapath)
-        eventsdf <- read_csv(input$events$datapath)
+        wallsdf <<- read_csv(input$shape$datapath)
+        apsdf <<- read_csv(input$aps$datapath)
+        eventsdf <<- read_csv(input$events$datapath)
       },
       error = function(e) {stop(safeError(e))}
     )
@@ -110,15 +117,36 @@ server <- function(input, output) {
         myF <- as.character(f)
         plotName <- paste0("floor", myF)
         output[[plotName]] <- renderPlot({
-          plot(voronoiMaps[[myF]], main = plotName)
+          plot(voronoiMaps[[myF]], main = plotName, axes = TRUE)
         })
       })
     }
     
-    output$diagnostic <- renderUI(HTML(paste(msgText, "<br/> Polygons drawn! Go to Visualizations Tab.")))
-    showTab("tabs", "Visualizations")
+    output$diagnostic <- renderUI(HTML(paste(msgText, "<br/> Polygons drawn, please confirm.")))
+    showTab("tabs", "Confirm Upload")
   })
   
+  observeEvent(input$plotsOk, {
+    showTab("tabs", "Charts")
+    showTab("tabs", "Summary")
+    output$summaryTable <- renderTable({
+      # some summary statistics
+      binByAp <- eventsdf %>% count(ap, sort = TRUE)
+      t(
+        data.frame(
+          "Unique APs" = length(unique(eventsdf$ap)),
+          "Unique MACs" = length(unique(eventsdf$macaddr)),
+          "Most Total Events" = paste(binByAp[1,1], ", n =", binByAp[1,2]),
+          "First Event" = min(eventsdf$`_time`),
+          "Last Event" = max(eventsdf$`_time`),
+          "Duration" = max(eventsdf$`_time`) - min(eventsdf$`_time`)
+        )
+      )
+    }, rownames = TRUE, colnames = FALSE)
+    
+    hideTab("tabs", "File Upload")
+    hideTab("tabs", "Confirm Upload")
+  })
 }
 
 shinyApp(ui = ui, server = server)
