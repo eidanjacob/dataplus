@@ -8,13 +8,14 @@ library(dplyr)
 library(rgeos)
 library(ggplot2)
 library(leaflet)
+library(animation)
 library(gganimate)
 
 wallsdf <- NULL
 apsdf <- NULL
 eventsdf <- NULL
 timeSteps <- c("30 min" = 1800, "1 hr" = 3600, "2 hr" = 7200)
-ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
+#ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
 ui <- fluidPage(
   
   navbarPage("Single Building Wireless", id = "tabs",
@@ -40,10 +41,14 @@ ui <- fluidPage(
              tabPanel("Charts",
                       sidebarLayout(
                         sidebarPanel(
-                          selectInput("stepSize", "Time Step", choices = timeSteps, selected = timeSteps[1])
+                          selectInput("stepSize", "Time Step", choices = names(timeSteps)),
+                          sliderInput("frameDelay", "Frame Delay (ms)", min = 100, max = 5000, value = 1000),
+                          checkboxInput("save", "Save GIF"),
+                          checkboxGroupInput("floorsToView", "Floors", choices = floors, selected = floors),
+                          actionButton("generateGIF", "Run Animation")
                         ),
                         mainPanel(
-                          
+                          uiOutput("imagesDisplay")
                         )
                       )
              )
@@ -137,7 +142,7 @@ server <- function(input, output) {
     showTab("tabs", "Confirm Upload")
   })
   
-  observeEvent(input$plotsOk, {
+  suppressWarnings(observeEvent(input$plotsOk, {
     showTab("tabs", "Charts")
     showTab("tabs", "Summary")
     binByAp <- eventsdf %>% count(ap, sort = TRUE)
@@ -170,17 +175,16 @@ server <- function(input, output) {
     # (indexed by time bin) of plots (indexed by floor), to be used in future animations.
     
     plots <- lapply(timeSteps, function(delta){
-      
       breaks <- seq(startTime, endTime, delta)
       binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
       binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), length = delta, ordered_result = TRUE)
-      chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>% 
+      chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>%
         mutate(binStart = bin[[1]])
-      pal <- colorNumeric("Reds", chartData$`n()`)
       bins <- unique(binnedEvents$bin)
-      lapply(floors, function(f){
+      frames <- lapply(floors, function(f){
         fortified <- fortifiedList[[as.character(f)]]
-        ready <- left_join(fortified, chartData, by = c("id" = "ap"))
+        ready <- left_join(fortified, chartData, by = c("id" = "ap")) 
+        ready$`n()`[which(is.na(ready$`n()`))] <- 0
         p <- ggplot() +
           geom_polygon(data = ready, aes(fill = `n()`,
                                          x = long,
@@ -193,13 +197,36 @@ server <- function(input, output) {
                                       group = group),
                     color = "white",
                     size = 1)
-        return(gganimate(p))
+        return(p)
       })
-      
+      names(frames) = floors
+      return(frames)
     })
     
     hideTab("tabs", "File Upload")
     hideTab("tabs", "Confirm Upload")
+  }))
+  
+  observeEvent(input$generateGIF, {
+    myPlots <- plots[[input$stepSize]]
+    myPlots <- myPlots[as.character(input$floorsToView)]
+    local({
+      for(i in 1:length(myPlots)){
+        output[[paste0("images", i)]] <- renderPlot(
+          gganimate(
+            myPlots[[i]]
+          )
+        )
+      }
+    })
+  })
+  
+  output$imagesDisplay <- renderUI({
+    plotOutList <- lapply(input$floorsToView, function(f){
+      plotName <- paste0("images", as.character(f))
+      imageOutput(plotName)
+    })
+    do.call(tagList, plotOutList)
   })
   
 }
