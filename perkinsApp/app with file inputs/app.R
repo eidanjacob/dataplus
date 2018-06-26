@@ -6,13 +6,15 @@ library(deldir)
 library(lubridate)
 library(dplyr)
 library(rgeos)
-library(gridExtra)
 library(ggplot2)
+library(leaflet)
+library(gganimate)
 
 wallsdf <- NULL
 apsdf <- NULL
 eventsdf <- NULL
-
+timeSteps <- c("30 min" = 1800, "1 hr" = 3600, "2 hr" = 7200)
+ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
 ui <- fluidPage(
   
   navbarPage("Single Building Wireless", id = "tabs",
@@ -35,7 +37,16 @@ ui <- fluidPage(
              ),
              tabPanel("Summary",
                       wellPanel(tableOutput("summaryTable"))),
-             tabPanel("Charts")
+             tabPanel("Charts",
+                      sidebarLayout(
+                        sidebarPanel(
+                          selectInput("stepSize", "Time Step", choices = timeSteps, selected = timeSteps[1])
+                        ),
+                        mainPanel(
+                          
+                        )
+                      )
+             )
   )
 )
 
@@ -87,7 +98,7 @@ server <- function(input, output) {
         polys[[j]] <- Polygons(list(Polygon(pcrds)), ID=as.character(j))
       }
       SP <- SpatialPolygons(polys)
-      SP <- intersect(SP, border)
+      SP <- raster::intersect(SP, border)
       for(x in 1:nrow(apsdf[apsdf$floor == f,])){
         SP@polygons[[x]]@ID <- as.character(x)
       }
@@ -95,9 +106,9 @@ server <- function(input, output) {
         x = apsdf[apsdf$floor == f,"transX"], 
         y = apsdf[apsdf$floor == f,"transY"]))
       # tag polygons with ap name
-      SPDF@data$id = as.character(apsdf[apsdf$floor == f, "ap"])
+      SPDF@data$id = as.character(apsdf[apsdf$floor == f, "ap"][[1]])
       sapply(1:length(apsdf[apsdf$floor == f, "ap"]), function(x){
-        SPDF@polygons[[x]]@ID <- as.character(apsdf[apsdf$floor == f, "ap"][x])
+        SPDF@polygons[[x]]@ID <- as.character(apsdf[apsdf$floor == f, "ap"][[1]][x])
         SPDF <<- SPDF
       })
       return(SPDF)
@@ -129,9 +140,9 @@ server <- function(input, output) {
   observeEvent(input$plotsOk, {
     showTab("tabs", "Charts")
     showTab("tabs", "Summary")
+    binByAp <- eventsdf %>% count(ap, sort = TRUE)
     output$summaryTable <- renderTable({
       # some summary statistics
-      binByAp <- eventsdf %>% count(ap, sort = TRUE)
       t(
         data.frame(
           "Unique APs" = length(unique(eventsdf$ap)),
@@ -144,9 +155,53 @@ server <- function(input, output) {
       )
     }, rownames = TRUE, colnames = FALSE)
     
+    # Make calculations for choropleths.
+    startTime <- min(eventsdf$`_time`)
+    endTime <- min(eventsdf$`_time`)
+    
+    # convert polys to ggplot2 usable format and save in list
+    
+    fortifiedList <- lapply(voronoiMaps, function(vor){
+      fortified <- fortify(vor, region = "id")
+    })
+    names(fortifiedList) = as.character(floors)
+    
+    # intended result of these nested lapplys is a list of (indexed by timeStep size) of lists 
+    # (indexed by time bin) of plots (indexed by floor), to be used in future animations.
+    
+    plots <- lapply(timeSteps, function(delta){
+      
+      breaks <- seq(startTime, endTime, delta)
+      binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
+      binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), length = delta, ordered_result = TRUE)
+      chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>% 
+        mutate(binStart = bin[[1]])
+      pal <- colorNumeric("Reds", chartData$`n()`)
+      bins <- unique(binnedEvents$bin)
+      lapply(floors, function(f){
+        fortified <- fortifiedList[[as.character(f)]]
+        ready <- left_join(fortified, chartData, by = c("id" = "ap"))
+        p <- ggplot() +
+          geom_polygon(data = ready, aes(fill = `n()`,
+                                         x = long,
+                                         y = lat,
+                                         frame = factor(as.numeric(bin)),
+                                         group = group)) +
+          scale_fill_gradient(low = "gray", high = "red") +
+          geom_path(data = ready, aes(x = long,
+                                      y = lat,
+                                      group = group),
+                    color = "white",
+                    size = 1)
+        return(gganimate(p))
+      })
+      
+    })
+    
     hideTab("tabs", "File Upload")
     hideTab("tabs", "Confirm Upload")
   })
+  
 }
 
 shinyApp(ui = ui, server = server)
