@@ -11,11 +11,11 @@ library(leaflet)
 library(animation)
 library(gganimate)
 
-wallsdf <- NULL
-apsdf <- NULL
-eventsdf <- NULL
+# Global Vars
+wallsdf <- apsdf <- eventsdf <- voronoiMaps <- floors <- plots <- imagesToShow <- NULL
 timeSteps <- c("30 min" = 1800, "1 hr" = 3600, "2 hr" = 7200)
-#ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
+ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
+
 ui <- fluidPage(
   
   navbarPage("Single Building Wireless", id = "tabs",
@@ -42,13 +42,14 @@ ui <- fluidPage(
                       sidebarLayout(
                         sidebarPanel(
                           selectInput("stepSize", "Time Step", choices = names(timeSteps)),
-                          sliderInput("frameDelay", "Frame Delay (ms)", min = 100, max = 5000, value = 1000),
-                          checkboxInput("save", "Save GIF"),
-                          checkboxGroupInput("floorsToView", "Floors", choices = floors, selected = floors),
+                          sliderInput("frameDelay", "Frame Delay (ms)",
+                                      min = 100, max = 5000, value = 1000,
+                                      step = 50),
+                          uiOutput("floorCheckBox"),
                           actionButton("generateGIF", "Run Animation")
                         ),
                         mainPanel(
-                          uiOutput("imagesDisplay")
+                          uiOutput("chartDisplay")
                         )
                       )
              )
@@ -56,9 +57,12 @@ ui <- fluidPage(
 )
 
 server <- function(input, output) {
+  
   options(shiny.maxRequestSize=1024^4)
   hideTab("tabs", "Confirm Upload")
+  hideTab("tabs", "Summary")
   hideTab("tabs", "Charts")
+  
   observeEvent(input$read, {
     hideTab("tabs", "Confirm Upload")
     # The user has indicated they are ready to proceed. Read the submitted data frames and output diagnostics.
@@ -80,7 +84,7 @@ server <- function(input, output) {
     } else {
       # Passed basic sanity check, run more advanced?
       eventsdf <- eventsdf %>% filter(ap %in% apsdf$ap)
-      floors <- sort(unique(wallsdf$floor))
+      floors <<- sort(unique(wallsdf$floor))
       if(any(floors != sort(unique(apsdf$floor)))){
         warning("Files contain information on different floors.")
       }
@@ -90,7 +94,7 @@ server <- function(input, output) {
       output$diagnostic <- renderUI(HTML(msgText))
     }
     # Split stuff by floor and draw some polygons.
-    voronoiMaps <- lapply(floors, function(f){
+    voronoiMaps <<- lapply(floors, function(f){
       fwalls <- wallsdf %>% filter(floor == f)
       border <- SpatialPolygons(list(Polygons(list(Polygon(fwalls[,c("transX", "transY")])),1)))
       faps <- apsdf %>% filter(floor == f)
@@ -118,7 +122,7 @@ server <- function(input, output) {
       })
       return(SPDF)
     })
-    names(voronoiMaps) = as.character(floors)
+    names(voronoiMaps) <<- as.character(floors)
     
     # Generate floor plan plots
     output$plotList <- renderUI({
@@ -160,6 +164,10 @@ server <- function(input, output) {
       )
     }, rownames = TRUE, colnames = FALSE)
     
+    output$floorCheckBox <- renderUI({
+      checkboxGroupInput("floorsToView", "Floors", choices = floors, selected = floors)
+    })
+    
     # Make calculations for choropleths.
     startTime <- min(eventsdf$`_time`)
     endTime <- min(eventsdf$`_time`)
@@ -174,7 +182,7 @@ server <- function(input, output) {
     # intended result of these nested lapplys is a list of (indexed by timeStep size) of lists 
     # (indexed by time bin) of plots (indexed by floor), to be used in future animations.
     
-    plots <- lapply(timeSteps, function(delta){
+    plots <<- lapply(timeSteps, function(delta){
       breaks <- seq(startTime, endTime, delta)
       binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
       binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), length = delta, ordered_result = TRUE)
@@ -199,7 +207,7 @@ server <- function(input, output) {
                     size = 1)
         return(p)
       })
-      names(frames) = floors
+      names(frames) = as.character(floors)
       return(frames)
     })
     
@@ -209,25 +217,29 @@ server <- function(input, output) {
   
   observeEvent(input$generateGIF, {
     myPlots <- plots[[input$stepSize]]
-    myPlots <- myPlots[as.character(input$floorsToView)]
-    local({
-      for(i in 1:length(myPlots)){
-        output[[paste0("images", i)]] <- renderPlot(
-          gganimate(
-            myPlots[[i]]
-          )
-        )
-      }
+    imagesToShow <<- NULL
+    lapply(input$floorsToView, function(f){
+      imageName <- paste0("images", as.character(f))
+      filename = paste0(imageName, ".gif")
+      imagesToShow <<- c(imagesToShow, imageName)
+      print(imagesToShow)
+      gganimate(myPlots[[as.character(f)]], filename = filename)
+      output[[imageName]] <- renderImage(list(src = filename))
     })
+    
+    output$chartDisplay <- renderUI({
+      print(imagesToShow)
+      image_output_list <- lapply(imagesToShow, function(img){
+        imageOutput(img)
+      })
+      print(image_output_list)
+      do.call(tagList, image_output_list)
+    })
+    
+    print("end")
   })
   
-  output$imagesDisplay <- renderUI({
-    plotOutList <- lapply(input$floorsToView, function(f){
-      plotName <- paste0("images", as.character(f))
-      imageOutput(plotName)
-    })
-    do.call(tagList, plotOutList)
-  })
+  
   
 }
 
