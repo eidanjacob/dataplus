@@ -11,6 +11,7 @@ library(leaflet)
 library(animation)
 library(gganimate)
 library(tidyr)
+library(RColorBrewer)
 
 # Global Vars
 wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plots <- NULL
@@ -56,7 +57,7 @@ ui <- fluidPage(
   )
 )
 
-server <- function(input, output) {
+server <- function(input, output){
   
   options(shiny.maxRequestSize=1024^4)
   hideTab("tabs", "Confirm Upload")
@@ -163,6 +164,7 @@ server <- function(input, output) {
     showTab("tabs", "Charts")
     showTab("tabs", "Summary")
     binByAp <- eventsdf %>% count(ap, sort = TRUE)
+    
     output$summaryTable <- renderTable({
       # some summary statistics
       t(
@@ -184,23 +186,22 @@ server <- function(input, output) {
     # convert polys to ggplot2 usable format and save in list
     fortified <- fortify(voronoiSPDF, region = "id")
     
-    # intended result of these nested lapplys is a list (indexed by timeStep size) 
-    # of lists (indexed by timestep) of plots
-    
     plots <<- lapply(timeSteps, function(delta){
       breaks <- seq(startTime, endTime, delta)
       binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
       binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), length = delta, ordered_result = TRUE)
       chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>%
-        complete(bin, ap, fill = list(0))
+        complete(bin, ap) %>%
+        replace_na(list(`n()` = 0))
       ready <- left_join(fortified, chartData, by = c("id" = "ap")) 
       p <- ggplot() +
         geom_polygon(data = ready, aes(fill = `n()`,
                                        x = long,
                                        y = lat,
                                        frame = as.numeric(bin),
-                                       group = group)) +
-        scale_fill_continuous(low = "gray", high = "red") + 
+                                       group = group)
+        ) +
+        scale_fill_gradient(low = "#e6e6Fa", high = "#4b0082") +
         coord_fixed() +
         geom_path(data = ready, aes(x = long,
                                     y = lat,
@@ -208,6 +209,7 @@ server <- function(input, output) {
                   color = "white",
                   size = 1)
     })
+    
     names(plots) <- names(timeSteps)
     hideTab("tabs", "File Upload")
     hideTab("tabs", "Confirm Upload")
@@ -215,7 +217,6 @@ server <- function(input, output) {
   
   observeEvent(input$generateGIF, {
     fileName <- "timeLapse.gif"
-    print(input$stepSize)
     gganimate(plots[[as.character(input$stepSize)]], filename = fileName)
     output$gif <- renderImage({
       list(src = fileName)
