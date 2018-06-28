@@ -10,9 +10,10 @@ library(ggplot2)
 library(leaflet)
 library(animation)
 library(gganimate)
+library(gridExtra)
 
 # Global Vars
-wallsdf <- apsdf <- eventsdf <- voronoiMaps <- floors <- plots <- imagesToShow <- NULL
+wallsdf <- apsdf <- eventsdf <- voronoiMaps <- floors <- offsets <- NULL
 timeSteps <- c("30 min" = 1800, "1 hr" = 3600, "2 hr" = 7200)
 ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
 
@@ -33,7 +34,7 @@ ui <- fluidPage(
                       )
              ),
              tabPanel("Confirm Upload",
-                      uiOutput("plotList"),
+                      plotOutput("floorPlan"),
                       actionButton("plotsOk", "Looking Good")
              ),
              tabPanel("Summary",
@@ -45,7 +46,6 @@ ui <- fluidPage(
                           sliderInput("frameDelay", "Frame Delay (ms)",
                                       min = 100, max = 5000, value = 1000,
                                       step = 50),
-                          uiOutput("floorCheckBox"),
                           actionButton("generateGIF", "Run Animation")
                         ),
                         mainPanel(
@@ -64,7 +64,6 @@ server <- function(input, output) {
   hideTab("tabs", "Charts")
   
   observeEvent(input$read, {
-    hideTab("tabs", "Confirm Upload")
     # The user has indicated they are ready to proceed. Read the submitted data frames and output diagnostics.
     req(input$shape)
     req(input$aps)
@@ -93,54 +92,70 @@ server <- function(input, output) {
                        "<br/> Events:", as.character(nrow(eventsdf)))
       output$diagnostic <- renderUI(HTML(msgText))
     }
-    # Split stuff by floor and draw some polygons.
-    voronoiMaps <<- lapply(floors, function(f){
-      fwalls <- wallsdf %>% filter(floor == f)
-      border <- SpatialPolygons(list(Polygons(list(Polygon(fwalls[,c("transX", "transY")])),1)))
-      faps <- apsdf %>% filter(floor == f)
-      fcells <- deldir(data.frame(x = faps$transX, y = faps$transY))
-      w = tile.list(fcells)
-      polys = vector(mode = "list", length = length(w))
-      for (j in seq(along=polys)) {
-        pcrds <- cbind(w[[j]]$x, w[[j]]$y)
-        pcrds <- rbind(pcrds, pcrds[1,])
-        polys[[j]] <- Polygons(list(Polygon(pcrds)), ID=as.character(j))
-      }
-      SP <- SpatialPolygons(polys)
-      SP <- raster::intersect(SP, border)
-      for(x in 1:nrow(apsdf[apsdf$floor == f,])){
-        SP@polygons[[x]]@ID <- as.character(x)
-      }
-      SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(
-        x = apsdf[apsdf$floor == f,"transX"], 
-        y = apsdf[apsdf$floor == f,"transY"]))
-      # tag polygons with ap name
-      SPDF@data$id = as.character(apsdf[apsdf$floor == f, "ap"][[1]])
-      sapply(1:length(apsdf[apsdf$floor == f, "ap"]), function(x){
-        SPDF@polygons[[x]]@ID <- as.character(apsdf[apsdf$floor == f, "ap"][[1]][x])
-        SPDF <<- SPDF
+    # ###########
+    # apsdf <- read_csv("./perkins_aps")
+    # wallsdf<- read_csv("./perkins_walls")
+    fn = length(floors)
+    xRange <- max(
+      sapply(floors, function(f){
+        max(wallsdf$transX[wallsdf$floor == f]) - min(wallsdf$transX[wallsdf$floor == f])
       })
-      return(SPDF)
-    })
-    names(voronoiMaps) <<- as.character(floors)
-    
-    # Generate floor plan plots
-    output$plotList <- renderUI({
-      plotOutList <- lapply(floors, function(f){
-        plotName <- paste0("floor", f)
-        plotOutput(plotName)
+    )
+    yRange <- max(
+      sapply(floors, function(f){
+        max(wallsdf$transY[wallsdf$floor == f]) - min(wallsdf$transY[wallsdf$floor == f])
       })
-      do.call(tagList, plotOutList)
-    })
-    for(f in floors){
-      local({
-        myF <- as.character(f)
-        plotName <- paste0("floor", myF)
-        output[[plotName]] <- renderPlot({
-          plot(voronoiMaps[[myF]], main = plotName, axes = TRUE)
+    )
+    offsets <<- data.frame(
+      t(
+        sapply(1:fn, function(i){
+          xOff <- (xRange + 10) * ((i - 1) %% 2)
+          yOff <- (yRange + 10) * floor(i/2 - 1/2)
+          return(c(xOff, yOff))
         })
-      })
+      )
+    )
+    rownames(offsets) <- as.character(floors)
+    colnames(offsets) <- c("xOff", "yOff")
+    
+    wallsdf <- wallsdf %>%
+      mutate(transX = transX + offsets[as.character(wallsdf$floor), "xOff"]) %>%
+      mutate(transY = transY + offsets[as.character(wallsdf$floor), "yOff"])
+    
+    apsdf <- apsdf %>%
+      mutate(transX = transX + offsets[as.character(apsdf$floor), "xOff"]) %>%
+      mutate(transY = transY + offsets[as.character(apsdf$floor), "yOff"])
+    
+    # Split stuff by floor and draw some polygons.
+    borderList <- lapply(floors, function(f){
+      fwalls <- wallsdf %>% filter(floor == f)
+      border <- Polygons(list(Polygon(fwalls[,c("transX", "transY")])),as.character(f))
+    })
+    joined <- SpatialPolygons(borderList)
+    plot(joined)
+    fcells <- deldir(data.frame(x = apsdf$transX, y = apsdf$transY))
+    w = tile.list(fcells)
+    polys = vector(mode = "list", length = length(w))
+    for (j in seq(along=polys)) {
+      pcrds <- cbind(w[[j]]$x, w[[j]]$y)
+      pcrds <- rbind(pcrds, pcrds[1,])
+      polys[[j]] <- Polygons(list(Polygon(pcrds)), ID=as.character(j))
     }
+    SP <- SpatialPolygons(polys)
+    for(x in 1:nrow(apsdf)){
+      SP@polygons[[x]]@ID <- as.character(x)
+    }
+    SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(
+      x = apsdf$transX, 
+      y = apsdf$transY))
+    # tag polygons with ap name
+    SPDF@data$id = as.character(apsdf[, "ap"][[1]])
+    sapply(1:length(apsdf[, "ap"]), function(x){
+      SPDF@polygons[[x]]@ID <- as.character(apsdf[, "ap"][[1]][x])
+      SPDF <<- SPDF
+    })
+    voronoiSPDF <- raster::intersect(SPDF, joined)
+    output$floorPlan <- renderPlot({plot(voronoiSPDF)})
     
     output$diagnostic <- renderUI(HTML(paste(msgText, "<br/> Polygons drawn, please confirm.")))
     showTab("tabs", "Confirm Upload")
@@ -163,10 +178,6 @@ server <- function(input, output) {
         )
       )
     }, rownames = TRUE, colnames = FALSE)
-    
-    output$floorCheckBox <- renderUI({
-      checkboxGroupInput("floorsToView", "Floors", choices = floors, selected = floors)
-    })
     
     # Make calculations for choropleths.
     startTime <- min(eventsdf$`_time`)
@@ -193,19 +204,17 @@ server <- function(input, output) {
         fortified <- fortifiedList[[as.character(f)]]
         ready <- left_join(fortified, chartData, by = c("id" = "ap")) 
         ready$`n()`[which(is.na(ready$`n()`))] <- 0
-        p <- ggplot() +
-          geom_polygon(data = ready, aes(fill = `n()`,
-                                         x = long,
-                                         y = lat,
-                                         frame = factor(as.numeric(bin)),
-                                         group = group)) +
-          scale_fill_gradient(low = "gray", high = "red") +
-          geom_path(data = ready, aes(x = long,
-                                      y = lat,
-                                      group = group),
-                    color = "white",
-                    size = 1)
-        return(p)
+        g1 <- geom_polygon(data = ready, aes(fill = `n()`,
+                                             x = long + offsets$xOff[as.character(f)],
+                                             y = lat + offsets$yOff[as.character(f)],
+                                             frame = factor(as.numeric(bin)),
+                                             group = group))
+        g2 <- geom_path(data = ready, aes(x = long + offsets$xOff[as.character(f)],
+                                          y = lat + offsets$yOff[as.character(f)],
+                                          group = group),
+                        color = "white",
+                        size = 1)
+        return(list(g1,g2))
       })
       names(frames) = as.character(floors)
       return(frames)
@@ -217,29 +226,22 @@ server <- function(input, output) {
   
   observeEvent(input$generateGIF, {
     myPlots <- plots[[input$stepSize]]
-    imagesToShow <<- NULL
-    lapply(input$floorsToView, function(f){
-      imageName <- paste0("images", as.character(f))
-      filename = paste0(imageName, ".gif")
-      imagesToShow <<- c(imagesToShow, imageName)
-      print(imagesToShow)
-      gganimate(myPlots[[as.character(f)]], filename = filename)
-      output[[imageName]] <- renderImage(list(src = filename))
-    })
+    geomList <- NULL
+    for(f in floors){
+      geomList <- list(geomList, myPlots[[as.character(f)]])
+    }
+    fileName <- "hi.gif"
+    gganimate(ggplot() + 
+                geomList + 
+                scale_fill_gradient(low = "gray", high = "red"),
+              filename = file)
+    img <- image_read(file)
     
     output$chartDisplay <- renderUI({
-      print(imagesToShow)
-      image_output_list <- lapply(imagesToShow, function(img){
-        imageOutput(img)
-      })
-      print(image_output_list)
-      do.call(tagList, image_output_list)
+      imageOutput(img)
     })
     
-    print("end")
   })
-  
-  
   
 }
 
