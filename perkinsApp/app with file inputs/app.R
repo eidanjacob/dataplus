@@ -10,10 +10,10 @@ library(ggplot2)
 library(leaflet)
 library(animation)
 library(gganimate)
-library(gridExtra)
+library(tidyr)
 
 # Global Vars
-wallsdf <- apsdf <- eventsdf <- voronoiMaps <- floors <- offsets <- NULL
+wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plots <- NULL
 timeSteps <- c("30 min" = 1800, "1 hr" = 3600, "2 hr" = 7200)
 ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
 
@@ -49,7 +49,7 @@ ui <- fluidPage(
                           actionButton("generateGIF", "Run Animation")
                         ),
                         mainPanel(
-                          uiOutput("chartDisplay")
+                          imageOutput("gif")
                         )
                       )
              )
@@ -109,8 +109,8 @@ server <- function(input, output) {
     offsets <<- data.frame(
       t(
         sapply(1:fn, function(i){
-          xOff <- (xRange + 10) * ((i - 1) %% 2)
-          yOff <- (yRange + 10) * floor(i/2 - 1/2)
+          xOff <- (xRange + 100) * ((i - 1) %% 2)
+          yOff <- (yRange) * floor(i/2 - 1/2)
           return(c(xOff, yOff))
         })
       )
@@ -132,7 +132,6 @@ server <- function(input, output) {
       border <- Polygons(list(Polygon(fwalls[,c("transX", "transY")])),as.character(f))
     })
     joined <- SpatialPolygons(borderList)
-    plot(joined)
     fcells <- deldir(data.frame(x = apsdf$transX, y = apsdf$transY))
     w = tile.list(fcells)
     polys = vector(mode = "list", length = length(w))
@@ -154,9 +153,8 @@ server <- function(input, output) {
       SPDF@polygons[[x]]@ID <- as.character(apsdf[, "ap"][[1]][x])
       SPDF <<- SPDF
     })
-    voronoiSPDF <- raster::intersect(SPDF, joined)
-    output$floorPlan <- renderPlot({plot(voronoiSPDF)})
-    
+    voronoiSPDF <<- raster::intersect(SPDF, joined)
+    output$floorPlan <- renderPlot({plot(voronoiSPDF, main = "Floor Plan Generated from Uploaded Files")})
     output$diagnostic <- renderUI(HTML(paste(msgText, "<br/> Polygons drawn, please confirm.")))
     showTab("tabs", "Confirm Upload")
   })
@@ -184,63 +182,44 @@ server <- function(input, output) {
     endTime <- min(eventsdf$`_time`)
     
     # convert polys to ggplot2 usable format and save in list
+    fortified <- fortify(voronoiSPDF, region = "id")
     
-    fortifiedList <- lapply(voronoiMaps, function(vor){
-      fortified <- fortify(vor, region = "id")
-    })
-    names(fortifiedList) = as.character(floors)
-    
-    # intended result of these nested lapplys is a list of (indexed by timeStep size) of lists 
-    # (indexed by time bin) of plots (indexed by floor), to be used in future animations.
+    # intended result of these nested lapplys is a list (indexed by timeStep size) 
+    # of lists (indexed by timestep) of plots
     
     plots <<- lapply(timeSteps, function(delta){
       breaks <- seq(startTime, endTime, delta)
       binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
       binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), length = delta, ordered_result = TRUE)
       chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>%
-        mutate(binStart = bin[[1]])
-      bins <- unique(binnedEvents$bin)
-      frames <- lapply(floors, function(f){
-        fortified <- fortifiedList[[as.character(f)]]
-        ready <- left_join(fortified, chartData, by = c("id" = "ap")) 
-        ready$`n()`[which(is.na(ready$`n()`))] <- 0
-        g1 <- geom_polygon(data = ready, aes(fill = `n()`,
-                                             x = long + offsets$xOff[as.character(f)],
-                                             y = lat + offsets$yOff[as.character(f)],
-                                             frame = factor(as.numeric(bin)),
-                                             group = group))
-        g2 <- geom_path(data = ready, aes(x = long + offsets$xOff[as.character(f)],
-                                          y = lat + offsets$yOff[as.character(f)],
-                                          group = group),
-                        color = "white",
-                        size = 1)
-        return(list(g1,g2))
-      })
-      names(frames) = as.character(floors)
-      return(frames)
+        complete(bin, ap, fill = list(0))
+      ready <- left_join(fortified, chartData, by = c("id" = "ap")) 
+      p <- ggplot() +
+        geom_polygon(data = ready, aes(fill = `n()`,
+                                       x = long,
+                                       y = lat,
+                                       frame = as.numeric(bin),
+                                       group = group)) +
+        scale_fill_continuous(low = "gray", high = "red") + 
+        coord_fixed() +
+        geom_path(data = ready, aes(x = long,
+                                    y = lat,
+                                    group = group),
+                  color = "white",
+                  size = 1)
     })
-    
+    names(plots) <- names(timeSteps)
     hideTab("tabs", "File Upload")
     hideTab("tabs", "Confirm Upload")
   }))
   
   observeEvent(input$generateGIF, {
-    myPlots <- plots[[input$stepSize]]
-    geomList <- NULL
-    for(f in floors){
-      geomList <- list(geomList, myPlots[[as.character(f)]])
-    }
-    fileName <- "hi.gif"
-    gganimate(ggplot() + 
-                geomList + 
-                scale_fill_gradient(low = "gray", high = "red"),
-              filename = file)
-    img <- image_read(file)
-    
-    output$chartDisplay <- renderUI({
-      imageOutput(img)
+    fileName <- "timeLapse.gif"
+    print(input$stepSize)
+    gganimate(plots[[as.character(input$stepSize)]], filename = fileName)
+    output$gif <- renderImage({
+      list(src = fileName)
     })
-    
   })
   
 }
