@@ -59,7 +59,7 @@ ui <- fluidPage(
 
 server <- function(input, output){
   
-  options(shiny.maxRequestSize=1024^4)
+  options(shiny.maxRequestSize=1024^6)
   hideTab("tabs", "Confirm Upload")
   hideTab("tabs", "Summary")
   hideTab("tabs", "Charts")
@@ -83,7 +83,7 @@ server <- function(input, output){
       warning("Invalid Input! Fix before Proceeding.")
     } else {
       # Passed basic sanity check, run more advanced?
-      eventsdf <- eventsdf %>% filter(ap %in% apsdf$ap)
+      # eventsdf <- eventsdf %>% filter(ap %in% apsdf$ap)
       floors <<- sort(unique(wallsdf$floor))
       if(any(floors != sort(unique(apsdf$floor)))){
         warning("Files contain information on different floors.")
@@ -187,7 +187,6 @@ server <- function(input, output){
     fortified <- fortify(voronoiSPDF, region = "id")
     
     plots <<- lapply(timeSteps, function(delta){
-      breaks <- seq(startTime, endTime, delta)
       binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
       binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), length = delta, ordered_result = TRUE)
       chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>%
@@ -208,6 +207,7 @@ server <- function(input, output){
                                     group = group),
                   color = "white",
                   size = 1)
+      return(p)
     })
     
     names(plots) <- names(timeSteps)
