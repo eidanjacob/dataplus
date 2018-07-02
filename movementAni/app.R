@@ -128,7 +128,6 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte, toInte, betweenInte,
   
   # by this point, the device has visited the appropriate locations
   # printing this stuff later/now just to see how many macaddrs were caught by the script for intuition/debugging purposes
-  
   #cat(mac, "from:to", indexFrom, indexTo, "\n")
   
   # using the time visited, grab the subset of visited locations to viz path from one loc to another
@@ -136,6 +135,18 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte, toInte, betweenInte,
   indexTo <- match(macsLocs$startTimeReal[indexTo], macsTime$realTime)
   macsTime <- macsTime[indexFrom:indexTo, ]
   return(list(timeStayed = timeStayed, macsTime = timeStayed[indexFrom:indexTo, ], orig = macsTime))
+}
+
+# Returns the macaddrs that do move within the dataset (can later be changed to time interval)
+doesMove <- function(df) {
+  temp <- df %>% # counts how many times a mac visited a place
+    group_by(macaddr,location) %>% 
+    summarise(num = n())
+  temp <- temp %>% # counts how many different places a mac visited
+    group_by(macaddr) %>% 
+    summarise(num = n())
+  temp <- temp[which(temp$num != 1), ]
+  return(temp$macaddr)
 }
 
 # # reading in data (project folder is working directory)
@@ -203,11 +214,11 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte, toInte, betweenInte,
 #   SPDF <<- SPDF
 # })
 # 
-# # polygon data -- to be used as a background
-# SPDF2 <- SPDF
-# SPDF2@data$id = rownames(SPDF2@data)
-# SPDF2.points = fortify(SPDF2, region="id")
-# SPDF2.df = plyr::join(SPDF2.points, SPDF2@data, by="id")
+# polygon data -- to be used as a background
+SPDF2 <- SPDF
+SPDF2@data$id = rownames(SPDF2@data)
+SPDF2.points = fortify(SPDF2, region="id")
+SPDF2.df = plyr::join(SPDF2.points, SPDF2@data, by="id")
 # 
 # # Mess with these numbers if you want.
 # timeSteps = c("1hr" = 60*60, "2hr" = 2*60*60, "4hr" = 4*60*60) # in seconds
@@ -267,15 +278,19 @@ ui <- fluidPage(
     
     # Sidebar panel for inputs ----
     sidebarPanel(
-      textInput("num", "Number of devices: ", value = 5),
+      p("To begin, check the box with the gif you want."),
+      p("Next, type in the # of devices you want to visualize."),
+      p("For the Location to Location gif, keeping the number under 20 allows for fast calculations."),
+      
+      checkboxInput("gen", "General"),
+      checkboxInput("loc", "Location to Location"),
       conditionalPanel(
         condition = "input.loc",
         textInput("from", "From location: ", value = "Perkins"),
         textInput("to", "To location: ", value = "WestUnion")
-        ),
-      #actionButton("submit", "Submit"), # commented out bc it doesn't do anything
-      checkboxInput("gen", "General"),
-      checkboxInput("loc", "Location to Location")
+      ),
+      textInput("num", "Number of devices: ", value = 20), 
+      actionButton("submit", "Submit")
     ),
     
     # Main panel for displaying outputs ----
@@ -289,8 +304,6 @@ ui <- fluidPage(
         condition = "input.loc",
         imageOutput("plotLoc")
       )
-      
-      
     )
   )
 )
@@ -298,141 +311,118 @@ ui <- fluidPage(
 # Define server logic 
 server <- function(input, output) {
   
-  ##################
-  # I am keeping this comment block for my own reference.
-  # # Reactive expression to generate the requested distribution ----
-  # # This is called whenever the inputs change. The output functions
-  # # defined below then use the value computed from this expression
-  # d <- reactive({
-  #   dist <- switch(input$dist,
-  #                  norm = rnorm,
-  #                  unif = runif,
-  #                  lnorm = rlnorm,
-  #                  exp = rexp,
-  #                  rnorm)
-  #   
-  #   dist(input$n)
-  # })
-  # 
-  # # Generate a plot of the data ----
-  # # Also uses the inputs to build the plot label. Note that the
-  # # dependencies on the inputs and the data reactive expression are
-  # # both tracked, and all expressions are called in the sequence
-  # # implied by the dependency graph.
-  # output$plot <- renderPlot({
-  #   dist <- input$dist
-  #   n <- input$n
-  #   
-  #   hist(d(),
-  #        main = paste("r", dist, "(", n, ")", sep = ""),
-  #        col = "#75AADB", border = "white")
-  # })
-  ##################
-  
-  # getting all the macaddrs
-  uniqMacs <- unique(macData$macaddr)
+  # getting all the macaddrs that actually move -- things that don't move can be hardcore students or desktop computers
+  uniqMacs <- doesMove(macData)
   # initial polygon background
   polys <- ggplot(SPDF2, aes(x = long, y = lat, group = group)) + 
     geom_polygon(fill = "grey") + coord_equal() + geom_path(color = "white")
   
   start.time = min(macData$time.window)
   
-  output$plotGen <- renderImage({
+  observeEvent(input$submit, {
     
-    withProgress(message = "Loading General Map...", {
-    include <- reactiveValues(num = input$num) # number of macaddrs to display/search through
-    
-    # A temp file to save the output.
-    # This file will be removed later by renderImage
-    outfile1 <- tempfile(fileext='.gif')
-    
-    # grabbing data from the first num macaddrs and setting up for plot
-    # IDEAS: take out macaddrs that do not move the whole day
-    macSample <- macData %>% 
-      filter(macaddr %in% uniqMacs[1:include$num]) %>%
-      arrange(macaddr, realTime) %>%
-      dplyr::select(lat, long, realTime, macaddr, location) %>%
-      rename(x = lat, y = long, time = realTime, id = macaddr) %>%
-      mutate(ease = "linear")
-    macSample$time <- as.double(macSample$time, units='secs')
-    mac_tween <- tween_elements(macSample, "time", "id", "ease", nframes = 300) %>% # (24hr * 60min)/300frames ~ 5 min per frame
-      mutate(year = round(time), macaddr = .group)
-    incProgress(detail = "Selection complete.")
-    
-    mapGen <- polys + geom_point(data = mac_tween, aes(x = y, y = x, group = macaddr, frame = .frame), color = "blue", alpha = 0.2) # overlaying points on polygons
-    incProgress(detail = "Points added to polys.")
-    
-    gganimate(mapGen, filename = "outfile1.gif", title_frame = TRUE, interval = 0.10)
-    incProgress(detail = "gganimate complete.")
-    
-    list(src = "outfile1.gif",
-         contentType = 'image/gif',
-         width = 720,
-         height = 720
-         # alt = "This is alternate text"
-    )
-    })
-  }, deleteFile = TRUE)
-  
-  output$plotLoc <- renderImage({
-    
-    withProgress(message = "Loading Location Map...",{
-    include <- reactiveValues(num = input$num, # number of macaddrs to display/search through
-                              fromLoc = input$from,
-                              toLoc = input$to,
-                              fromInte = 60 * 5,
-                              toInte = 60 * 5,
-                              betweenInte = 60 * 1,
-                              distInte = 2)
-    
-    # A temp file to save the output.
-    # This file will be removed later by renderImage
-    outfile2 <- tempfile(fileext='.gif')
-    
-    n <- 0
-    macsDF <- NULL # whether this is or is not a list is questionable
-    for(i in 1:length(uniqMacs)) { # grabbing data from macaddrs that visited certain places
-      if(n == include$num) {
-        break
-      }
-      truncatList <- findIndex(uniqMacs[[i]], macData, include$fromLoc, include$toLoc, include$fromInte, include$toInte, include$betweenInte, include$distInte)
-      if(!is.null(truncatList)) {
-        # changing the times so that they can all be viewed at once
-        timeDiff <- truncatList[[3]]$time.window[[1]] - start.time
-        truncatList[[3]]$realTime <- sapply(truncatList[[3]]$realTime, FUN = function(x) {x - timeDiff})
+    output$plotGen <- renderImage({
+      
+      withProgress(message = "Loading General Map...", {
+        include <- reactiveValues(num = input$num) # number of macaddrs to display/search through
+        uniqMacs <- sample(uniqMacs, input$num) # sampling num random macs
+        # A temp file to save the output.
+        # This file will be removed later by renderImage
+        outfile1 <- tempfile(fileext='.gif')
         
-        macsDF <- rbind(macsDF, truncatList[[3]])
-        n <- n + 1
-      }
-    }
-    incProgress(detail = "Selection complete.")
+        # grabbing data from the first num macaddrs and setting up for plot
+        macSample <- macData %>% 
+          filter(macaddr %in% uniqMacs[1:include$num]) %>%
+          arrange(macaddr, realTime) %>%
+          dplyr::select(lat, long, realTime, macaddr, location) %>%
+          rename(x = lat, y = long, time = realTime, id = macaddr) %>%
+          mutate(ease = "linear")
+        macSample$time <- as.double(macSample$time, units='secs')
+        mac_tween <- tween_elements(macSample, "time", "id", "ease", nframes = 300) %>% # (24hr * 60min)/300frames ~ 5 min per frame
+          mutate(year = round(time), macaddr = .group)
+        incProgress(detail = "Selection complete.")
+        
+        mapGen <- polys + geom_point(data = mac_tween, aes(x = y, y = x, group = macaddr, frame = .frame), color = "blue", alpha = 0.2) # overlaying points on polygons
+        incProgress(detail = "Points added to polys.")
+        
+        gganimate(mapGen, filename = "outfile1.gif", title_frame = TRUE, interval = 0.10)
+        incProgress(detail = "gganimate complete.")
+        
+        list(src = "outfile1.gif",
+             contentType = 'image/gif',
+             width = 720,
+             height = 720
+             # alt = "This is alternate text"
+        )
+      })
+    }, deleteFile = TRUE)
+  })
+  
+  observeEvent(input$submit, {
     
-    # setting up for tweenr
-    macLocs <- macsDF %>% 
-      arrange(macaddr, realTime) %>%
-      dplyr::select(lat, long, realTime, macaddr, location) %>%
-      rename(x = lat, y = long, time = realTime, id = macaddr) %>%
-      mutate(ease = "linear")
-    
-    #macLocs$time <- as.double(macLocs$time, units='secs')
-    
-    loc_tween <- tween_elements(macLocs, "time", "id", "ease", nframes = 300) %>% # (24hr * 60min)/300frames ~ 5 min per frame
-      mutate(year = round(time), macaddr = .group)
-    
-    mapLoc <- polys + geom_point(data = loc_tween, aes(x = y, y = x, group = macaddr, frame = .frame), color = "blue", alpha = 0.3) # overlaying points on polygons
-    incProgress(detail = "Points added to polys.")
-    
-    gganimate(mapLoc, filename = "outfile2.gif", title_frame = TRUE, interval = 0.10)
-    incProgress(detail = "gganimate complete.")
-    
-    list(src = "outfile2.gif",
-         contentType = 'image/gif',
-         width = 720,
-         height = 720
-         # alt = "This is alternate text"
-    )
-    })
-  }, deleteFile = TRUE)
+    output$plotLoc <- renderImage({
+      
+      withProgress(message = "Loading Location Map...",{
+        include <- reactiveValues(num = input$num, # number of macaddrs to display/search through
+                                  fromLoc = input$from,
+                                  toLoc = input$to,
+                                  fromInte = 60 * 5,
+                                  toInte = 60 * 5,
+                                  betweenInte = 60 * 1,
+                                  distInte = 2)
+        
+        # A temp file to save the output.
+        # This file will be removed later by renderImage
+        outfile2 <- tempfile(fileext='.gif')
+        
+        uniqMacs <- macData %>% # filtering for macs that have visited locations to speed up runtimes
+          filter(location %in% c(input$from, input$to))
+        uniqMacs <- unique(uniqMacs$macaddr)
+        
+        n <- 0
+        macsDF <- NULL # whether this is or is not a list is questionable
+        for(i in 1:length(uniqMacs)) { # grabbing data from macaddrs that visited certain places
+          if(n == include$num | n == 300) { # second if condition is just to make sure code will run in a reasonable timeframe
+            break
+          }
+          truncatList <- findIndex(uniqMacs[[i]], macData, include$fromLoc, include$toLoc, include$fromInte, include$toInte, include$betweenInte, include$distInte)
+          if(!is.null(truncatList)) {
+            # changing the times so that they can all be viewed at once
+            timeDiff <- truncatList[[3]]$time.window[[1]] - start.time
+            truncatList[[3]]$realTime <- sapply(truncatList[[3]]$realTime, FUN = function(x) {x - timeDiff})
+            
+            macsDF <- rbind(macsDF, truncatList[[3]])
+            n <- n + 1
+          }
+          incProgress(amount = 1/400)
+        }
+        incProgress(detail = "Selection complete.")
+        
+        # setting up for tweenr
+        macLocs <- macsDF %>% 
+          arrange(macaddr, realTime) %>%
+          dplyr::select(lat, long, realTime, macaddr, location) %>%
+          rename(x = lat, y = long, time = realTime, id = macaddr) %>%
+          mutate(ease = "linear")
+        
+        loc_tween <- tween_elements(macLocs, "time", "id", "ease", nframes = 300) %>% # (24hr * 60min)/300frames ~ 5 min per frame
+          mutate(year = round(time), macaddr = .group)
+        
+        mapLoc <- polys + geom_point(data = loc_tween, aes(x = y, y = x, group = macaddr, frame = .frame), color = "blue", alpha = 0.3) # overlaying points on polygons
+        incProgress(detail = "Points added to polys.")
+        
+        gganimate(mapLoc, filename = "outfile2.gif", title_frame = TRUE, interval = 0.10)
+        incProgress(detail = "gganimate complete.")
+        
+        list(src = "outfile2.gif",
+             contentType = 'image/gif',
+             width = 720,
+             height = 720
+             # alt = "This is alternate text"
+        )
+      })
+    }, deleteFile = TRUE)
+  })
 }
 
 # Create Shiny app ----
