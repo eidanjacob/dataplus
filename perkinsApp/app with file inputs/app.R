@@ -12,6 +12,7 @@ library(animation)
 library(gganimate)
 library(tidyr)
 library(RColorBrewer)
+library(maps)
 
 # Global Vars
 wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plots <- NULL
@@ -119,6 +120,12 @@ server <- function(input, output){
     rownames(offsets) <- as.character(floors)
     colnames(offsets) <- c("xOff", "yOff")
     
+    xMin <- min(wallsdf$transX)
+    yMin <- min(wallsdf$transY)
+    labelLocations <- offsets %>%
+      mutate(xOff = xOff + xMin + xRange) %>%
+      mutate(yOff = yOff + yMin + yRange)
+    
     wallsdf <- wallsdf %>%
       mutate(transX = transX + offsets[as.character(wallsdf$floor), "xOff"]) %>%
       mutate(transY = transY + offsets[as.character(wallsdf$floor), "yOff"])
@@ -205,8 +212,12 @@ server <- function(input, output){
         geom_path(data = ready, aes(x = long,
                                     y = lat,
                                     group = group),
-                  color = "white",
-                  size = 1)
+                  color = "gray",
+                  size = 1) + 
+        theme_bw() + xlab("Feet") + ylab("Feet") +
+        geom_text(aes(x = labelLocations[,1],
+                      y = labelLocations[,2],
+                      label = paste("Floor", floors)))
       return(p)
     })
     
