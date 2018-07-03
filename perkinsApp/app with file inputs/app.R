@@ -9,7 +9,8 @@ library(rgeos)
 library(ggplot2)
 library(leaflet)
 library(animation)
-library(gganimate)
+library(gganimate) ## NEED DIFFERENT VERSION
+# install with devtools::install_github('nteetor/gganimate')
 library(tidyr)
 library(RColorBrewer)
 library(maps)
@@ -44,7 +45,8 @@ ui <- fluidPage(
              tabPanel("Charts",
                       sidebarLayout(
                         sidebarPanel(
-                          selectInput("stepSize", "Time Step", choices = names(timeSteps)),
+                          selectInput("stepSize", "Time Step", 
+                                      choices = names(timeSteps)),
                           sliderInput("frameDelay", "Frame Delay (ms)",
                                       min = 100, max = 5000, value = 1000,
                                       step = 50),
@@ -66,7 +68,8 @@ server <- function(input, output){
   hideTab("tabs", "Charts")
   
   observeEvent(input$read, {
-    # The user has indicated they are ready to proceed. Read the submitted data frames and output diagnostics.
+    # The user has indicated they are ready to proceed. 
+    # Read the submitted data frames and output diagnostics.
     req(input$shape)
     req(input$aps)
     req(input$events)
@@ -78,7 +81,8 @@ server <- function(input, output){
       },
       error = function(e) {stop(safeError(e))}
     )
-    # Null or non-csv inputs will not make it past this point. Check that columns name match.
+    # Null or non-csv inputs will not make it past this point. 
+    # Check that columns name match.
     if(!all(c("transX", "transY", "floor") %in% names(wallsdf)) | 
        !all(c("transX", "transY", "floor", "ap") %in% names(apsdf))){
       warning("Invalid Input! Fix before Proceeding.")
@@ -100,12 +104,14 @@ server <- function(input, output){
     fn = length(floors)
     xRange <- max(
       sapply(floors, function(f){
-        max(wallsdf$transX[wallsdf$floor == f]) - min(wallsdf$transX[wallsdf$floor == f])
+        max(wallsdf$transX[wallsdf$floor == f]) - 
+          min(wallsdf$transX[wallsdf$floor == f])
       })
     )
     yRange <- max(
       sapply(floors, function(f){
-        max(wallsdf$transY[wallsdf$floor == f]) - min(wallsdf$transY[wallsdf$floor == f])
+        max(wallsdf$transY[wallsdf$floor == f]) - 
+          min(wallsdf$transY[wallsdf$floor == f])
       })
     )
     offsets <<- data.frame(
@@ -162,8 +168,10 @@ server <- function(input, output){
       SPDF <<- SPDF
     })
     voronoiSPDF <<- raster::intersect(SPDF, joined)
-    output$floorPlan <- renderPlot({plot(voronoiSPDF, main = "Floor Plan Generated from Uploaded Files")})
-    output$diagnostic <- renderUI(HTML(paste(msgText, "<br/> Polygons drawn, please confirm.")))
+    output$floorPlan <- renderPlot({
+      plot(voronoiSPDF, main = "Floor Plan Generated from Uploaded Files")})
+    output$diagnostic <- renderUI(HTML(
+      paste(msgText, "<br/> Polygons drawn, please confirm.")))
     showTab("tabs", "Confirm Upload")
   })
   
@@ -195,11 +203,13 @@ server <- function(input, output){
     
     plots <<- lapply(timeSteps, function(delta){
       binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
-      binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), length = delta, ordered_result = TRUE)
+      binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), 
+                                       length = delta, ordered_result = TRUE)
       chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>%
         complete(bin, ap) %>%
         replace_na(list(`n()` = 0))
-      ready <- left_join(fortified, chartData, by = c("id" = "ap")) 
+      ready <- left_join(fortified, chartData, by = c("id" = "ap"))
+      ready$`n()`[which(is.na(ready$`n()`))] <- 0
       p <- ggplot() +
         geom_polygon(data = ready, aes(fill = `n()`,
                                        x = long,
@@ -227,8 +237,12 @@ server <- function(input, output){
   }))
   
   observeEvent(input$generateGIF, {
+    ani.options(interval = input$frameDelay / 1000)
     fileName <- "timeLapse.gif"
-    gganimate(plots[[as.character(input$stepSize)]], filename = fileName)
+    bins <- seq(min(eventsdf$`_time`), max(eventsdf$`_time`), timeSteps[input$stepSize])
+    gg_animate(plots[[as.character(input$stepSize)]], 
+              filename = fileName,
+              title_frame = ~ bins[.])
     output$gif <- renderImage({
       list(src = fileName)
     })
