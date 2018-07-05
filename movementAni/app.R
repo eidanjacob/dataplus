@@ -16,148 +16,8 @@ library(ggplot2)
 library(gganimate)
 library(tweenr)
 
-# Script that calculates how long a macaddr stayed in some places
-# mac is a macaddr, macdf is dataframe of events
-howLong <- function(mac, macdf) {
-  macLocs <- macdf %>%
-    filter(macaddr == mac)
-  
-  macLocs$realTimeEnd <- lead(macLocs$realTime, 1)
-  macLocs <- macLocs %>% 
-    mutate(timeDiff = difftime(macLocs$realTimeEnd, macLocs$realTime)) # timeDiff is in seconds
-  
-  n <- 1 # unique index tied to groups of locations
-  i <- 1 # row index
-  # function that adds a column that has numbers that will increment when a value before it changes
-  col <- sapply(macLocs$location, function(x) { 
-    if(i != 1) {
-      if (x != macLocs[i-1, ]$location) {
-        n <<- n + 1
-        i <<- i + 1
-        return(n)
-      } else {
-        i <<- i + 1
-        return(n)
-      }
-    } else {
-      i <<- i + 1
-      return(n)
-    }
-  })
-  
-  macLocs$id <- col
-  
-  # if a macaddr has only visited one/less than one location
-  if(length(macLocs$id) <= 1) {
-    return(NULL)
-  }
-  
-  timeStayed <- aggregate(timeDiff ~ id, data = macLocs, sum)
-  
-  # creating column that has the amount of time spent at a locations, in order of visited locations, repeats allowed.
-  timeStayed <- macLocs %>% 
-    group_by(id, location) %>% 
-    summarise(totalTime = sum(timeDiff))
-  
-  timeStart <- macLocs[!duplicated(macLocs$id), ] 
-  
-  # creating dataframe with other useful columns
-  timeStayed <- cbind(timeStayed, 
-                      startTimeGeneral = timeStart$time.window, 
-                      startTimeReal = timeStart$realTime, 
-                      macaddr = timeStart$macaddr)
-  timeStayed[is.na(timeStayed)] <- 0
-  return(timeStayed)
-}
-
-# This script takes a macaddr, a dataframe of general event information,
-# and returns a list of three things: 
-# 1. a dataframe that tells how long a macaddr has stayed for each location
-# 2. the shortened dataframe of visited locations used in drawing lines
-# 3. the original dataframe of visited locations of the macaddr
-# it returns null when the macaddr did not visit the locations properly.
-findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, betweenInte=60*10, distInte=2) {
-  # filtering to find each location a macaddr has visited
-  macsTime <- macdf %>% 
-    filter(macaddr == mac)
-  
-  # filtering to find each location a macaddr has stayed
-  timeStayed <- howLong(mac, macsTime)
-  if(is.null(timeStayed)) {
-    return(NULL)
-  }
-  # filtering for locations based on the time intervals above
-  n1 <- which(timeStayed$location == fromLoc & timeStayed$totalTime > fromInte)
-  n2 <- which(timeStayed$location == toLoc & timeStayed$totalTime > toInte)
-  n3 <- which(timeStayed$location != fromLoc & timeStayed$location != toLoc & timeStayed$totalTime > betweenInte)
-  n4 <- c(n1, n2, n3)
-  n4 <- sort(n4)
-  macsLocs <- timeStayed[n4, ]
-  
-  # dealing with the case that fromLoc is empty string by grabbing everything to see how ppl get to toLoc
-  if(fromLoc == "") {
-    if(!toLoc %in% macsLocs$location) {
-      return(NULL)
-    }
-    indexFrom <- 1
-    indexTo <- match(toLoc, macsTime$location)
-    if(indexFrom == indexTo) {
-      indexTo <- match(toLoc, macsTime[2, ]$location) + indexTo
-      if(is.na(indexTo)) {
-        return(NULL)
-      }
-    }
-    return(list(timeStayed = timeStayed, macsTime = macsTime[indexFrom:indexTo, ], orig = macsTime))
-  }
-  
-  # filter out if macaddr does not stay at the locations correctly
-  if(!fromLoc %in% macsLocs$location | !toLoc %in% macsLocs$location) {
-    return(NULL)
-  }
-  # finding when device visited locations
-  indexFrom <- match(fromLoc, macsLocs$location)
-  indexTo <- match(toLoc, macsLocs$location)
-  
-  while(!is.na(indexTo) & !is.na(indexFrom)) {
-    if(indexTo > indexFrom) {
-      # to minimize the distance between the two locations -- that is, for ex,
-      # to filter out if a device starts at perkins, chills in their room
-      # for two hours, goes on East, goes back to west, goes to WU.
-      if(indexTo - indexFrom > distInte) {
-        indexFrom <- match(fromLoc, macsLocs[indexFrom+1:length(macsLocs), ]$location) + indexFrom
-        next
-      }
-      break
-    }
-    indexTo <- match(toLoc, macsLocs[indexTo+1:length(macsLocs), ]) 
-  }
-  # macaddr does not visit locations correctly
-  if(is.na(indexTo) | is.na(indexFrom)) {
-    return(NULL)
-  }
-  
-  # by this point, the device has visited the appropriate locations
-  # printing this stuff later/now just to see how many macaddrs were caught by the script for intuition/debugging purposes
-  #cat(mac, "from:to", indexFrom, indexTo, "\n")
-  
-  # using the time visited, grab the subset of visited locations to viz path from one loc to another
-  indexFrom <- match(macsLocs$startTimeReal[indexFrom], macsTime$realTime)
-  indexTo <- match(macsLocs$startTimeReal[indexTo], macsTime$realTime)
-  macsTime <- macsTime[indexFrom:indexTo, ]
-  return(list(timeStayed = timeStayed, macsTime = timeStayed[indexFrom:indexTo, ], orig = macsTime))
-}
-
-# Returns the macaddrs that do move within the dataset (can later be changed to time interval)
-doesMove <- function(df) {
-  temp <- df %>% # counts how many times a mac visited a place
-    group_by(macaddr,location) %>% 
-    summarise(num = n())
-  temp <- temp %>% # counts how many different places a mac visited
-    group_by(macaddr) %>% 
-    summarise(num = n())
-  temp <- temp[which(temp$num != 1), ]
-  return(temp$macaddr)
-}
+# importing functions
+source("../functions.R")
 
 # # reading in data (project folder is working directory)
 # coord <- read_csv("../locationsToCoordinates.csv")
@@ -243,7 +103,7 @@ macsToLocList <- list()
 
 end.times <- rep(end.time, length(timeSteps))
 
-for(i in 1){ # didn't feel like replacing i -> 1
+for(i in 1){ # didn't feel like replacing i -> 1 # note to self: this for loop could possibly be deleted since all it's doing is tagging ea mac with a time.window
   timeStep <- timeSteps[i]
   # Bin populations, calculate densities at each timestep, and cache for future plotting
   time.windowStart = start.time # time.window for selection
@@ -324,10 +184,15 @@ ui <- fluidPage(
 server <- function(input, output) {
   
   # getting all the macaddrs that actually move -- things that don't move can be hardcore students or desktop computers
-  uniqMacs <- doesMove(macData)
+  # This can be useful if you want a really animated and cool looking gif. otherwise, comment it out for realism.
+  # uniqMacs <- doesMove(macData)
+  
+  # getting list of macaddrs
+  uniqMacs <- macData$macaddr
+  
   # initial polygon background
   polys <- ggplot(SPDF2, aes(x = long, y = lat, group = group)) + 
-    geom_polygon(fill = "grey") + coord_equal() + geom_path(color = "white")
+    geom_polygon(fill = "gray84") + coord_equal() + geom_path(color = "white")
   
   start.time = min(macData$time.window)
     
@@ -352,12 +217,22 @@ server <- function(input, output) {
             dplyr::select(lat, long, realTime, macaddr, location) %>%
             rename(x = lat, y = long, time = realTime, id = macaddr) %>%
             mutate(ease = "linear")
-          macSample$time <- as.double(macSample$time, units='secs')
-          mac_tween <- tween_elements(macSample, "time", "id", "ease", nframes = 300) %>% # (24hr * 60min)/300frames ~ 5 min per frame
-            mutate(year = round(time), macaddr = .group)
+          macSample$realTime <- macSample$time
+          # tween_elements requires dividing with the time component, so we have a separate
+          # column for the seconds just to make the function work.
+          # later, after the merge, we keep the minimum times associated with each frame
+          # in column "min" to use as a title for the plot.
+          macSample$time <- as.double(macSample$time, units='secs') 
+          mac_tween <- tween_elements(macSample, "time", "id", "ease", nframes = 300) # (24hr * 60min)/300frames ~ 5 min per frame
           incProgress(detail = "Selection complete.")
           
-          mapGen <- polys + geom_point(data = mac_tween, aes(x = y, y = x, group = macaddr, frame = .frame), color = "blue", alpha = 0.2) + # overlaying points on polygons
+          # creating column "min" so the plot can be titled appropriately
+          minTimes <- aggregate(realTime ~ .frame, mac_tween, function(x) min(x))
+          minTimes <- minTimes %>% 
+            rename(min = realTime)
+          mac_tween <- merge.data.frame(mac_tween, minTimes)
+          
+          mapGen <- polys + geom_point(data = mac_tween, aes(x = y, y = x, group = .group, frame = min), color = "blue", alpha = 0.2) + # overlaying points on polygons
             theme_bw() + xlab("Longitude") + ylab("Latitude")
           incProgress(detail = "Points added to polys.")
           
