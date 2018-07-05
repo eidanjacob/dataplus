@@ -1,4 +1,7 @@
 # fromLoc toLoc app viz with lines
+# Note: Does not have error handling if text inputs are invalid.
+# BUGS
+# Will crash on ~second submit. Not sure why.
 
 # Load packages:
 # readr, readxl for data frame input
@@ -21,6 +24,8 @@ library(rgdal)
 library(lubridate)
 library(geosphere)
 library(raster)
+
+source("../functions.R")
 
 # # reading in data (project folder is working directory)
 # coord <- read_csv("../locationsToCoordinates.csv")
@@ -130,14 +135,14 @@ end.time = (max(df$`_time`))
 # Filtering for all macaddrs that moved/was registered within a certain period of the start time
 # to limit the size of the data set and prevent RStudio from crashing
 # It then samples num random macaddrs
-period <- 60 * 10 # in seconds
-num <- 200 # number of macaddrs to visualize
-inte <- interval(start.time, start.time + period)
-macaddrInLoc <- df %>%
-  filter(`_time` %within% inte)
-macaddrInLoc <- unique(macaddrInLoc$macaddr)
-#macaddrInLoc <- sample(macaddrInLoc, num) # should be implemented later so that indiv macaddrs that arent in this group can still be tracked
-df <- df %>% filter(macaddr %in% macaddrInLoc)
+# period <- 60 * 10 # in seconds
+# num <- 200 # number of macaddrs to visualize
+# inte <- interval(start.time, start.time + period)
+# macaddrInLoc <- df %>%
+#   filter(`_time` %within% inte)
+# macaddrInLoc <- unique(macaddrInLoc$macaddr)
+# #macaddrInLoc <- sample(macaddrInLoc, num) # should be implemented later so that indiv macaddrs that arent in this group can still be tracked
+# df <- df %>% filter(macaddr %in% macaddrInLoc)
 currMacs <- NULL # just to initialize so it exists globally
 
 popDensityList <- list()
@@ -145,6 +150,8 @@ paletteList <- list()
 macsToLocList <- list()
 
 end.times <- rep(end.time, length(timeSteps))
+
+colorPal <- "Purples"
 
 for(i in 1:1){
   timeStep <- timeSteps[i]
@@ -194,14 +201,14 @@ for(i in 1:1){
   }
   
   # setting up for chloropleth
-  palette_area <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 1))$info)
-  palette_aps  <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 2))$info)
-  palette_both <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 3))$info)
-  palette_raw  <- colorNumeric("YlOrRd", (populationDensities %>% filter(type == 4))$info)
-  palette_area_log <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 1))$info+1))
-  palette_aps_log  <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 2))$info+1))
-  palette_both_log <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 3))$info+1))
-  palette_raw_log  <- colorNumeric("YlOrRd", log((populationDensities %>% filter(type == 4))$info+1))
+  palette_area <- colorNumeric(colorPal, (populationDensities %>% filter(type == 1))$info)
+  palette_aps  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 2))$info)
+  palette_both <- colorNumeric(colorPal, (populationDensities %>% filter(type == 3))$info)
+  palette_raw  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 4))$info)
+  palette_area_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 1))$info+1))
+  palette_aps_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 2))$info+1))
+  palette_both_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 3))$info+1))
+  palette_raw_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 4))$info+1))
   
   thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw,
                               palette_area_log, palette_aps_log, palette_both_log, palette_raw_log)
@@ -218,74 +225,23 @@ legendTitles <- c("Population Density (area)",
                   "Population (raw count)")
 
 
-numOnMap <- 0 # just so it can be used later - note to self: put these all in one place
-fromLoc <- "Perkins" # default
-toLoc <- "WestUnion" # default
+numOnMap <- 0 # just so it can be used later
+
+# keeping this here just for reference for when the readme is written
+# fromLoc <- "Perkins" # default
+# toLoc <- "WestUnion" # default
 # the intervals can be changed so that locations like WU can be more accurately represented
 # aka people might intend to go to WU for take out, which means they might stay for only 5 min instead
 # of 10 min, a better indicator that the lines were long or they sat down and ate.
 # the betweenInte is 10 min just to keep travel times travel times instead of loitering times
 # the time spent determines whether a device passed through vs stayed
-fromInte <- 60 * 10 # in seconds
-betweenInte <- 60 * 5 # in seconds
-toInte <- 60 * 5 # in seconds
+# fromInte <- 60 * 10 # in seconds
+# betweenInte <- 60 * 5 # in seconds
+# toInte <- 60 * 5 # in seconds
 # max number of locations in between the target locations
 # increasing this number increases the devices present, but it decreases the "straightforwardness"
 # of the lines present
-distInte <- 2
-
-# Script that calculates how long a macaddr stayed in one place
-howLong <- function(mac, macdf) {
-  macLocs <- macdf %>%
-    filter(macaddr == mac)
-  
-  macLocs$realTimeEnd <- lead(macLocs$realTime, 1)
-  macLocs <- macLocs %>% 
-    mutate(timeDiff = difftime(macLocs$realTimeEnd, macLocs$realTime)) # timeDiff is in seconds
-  
-  n <- 1 # unique index tied to groups of locations
-  i <- 1 # row index
-  # function that adds a column that has numbers that will increment when a value before it changes
-  col <- sapply(macLocs$location, function(x) { 
-    if(i != 1) {
-      if (x != macLocs[i-1, ]$location) {
-        n <<- n + 1
-        i <<- i + 1
-        return(n)
-      } else {
-        i <<- i + 1
-        return(n)
-      }
-    } else {
-      i <<- i + 1
-      return(n)
-    }
-  })
-  
-  macLocs$id <- col
-  
-  # if a macaddr has only visited one/less than one location
-  if(length(macLocs$id) <= 1) {
-    return(NULL)
-  }
-  
-  timeStayed <- aggregate(timeDiff ~ id, data = macLocs, sum)
-  
-  # creating column that has the amount of time spent at a locations, in order of visited locations, repeats allowed.
-  timeStayed <- macLocs %>% 
-    group_by(id, location) %>% 
-    summarise(totalTime = sum(timeDiff))
-  
-  timeStart <- macLocs[!duplicated(macLocs$id), ] 
-  
-  # creating dataframe with other useful columns
-  timeStayed <- cbind(timeStayed, 
-                      startTimeGeneral = timeStart$time.window, 
-                      startTimeReal = timeStart$realTime, 
-                      macaddr = timeStart$macaddr)
-  timeStayed[is.na(timeStayed)] <- 0
-  return(timeStayed)
-}
+# distInte <- 2
 
 # app user interface
 ui <- fluidPage(
@@ -299,17 +255,20 @@ ui <- fluidPage(
       uiOutput("ui"),
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), inline = TRUE, selected = "All"),
       
-      textInput("from", "From location: ", value = fromLoc),
-      textInput("to", "To location: ", value = toLoc),
-      textInput("num", "Number of devices: ", value = num),
+      textInput("from", "From location: ", value = "Perkins"),
+      textInput("to", "To location: ", value = "WestUnion"),
+      textInput("num", "Number of devices: ", value = 200),
       actionButton("submit", "Submit"), # must press submit button and have viz flow checked to enable flow viz
+      p(),
+      textOutput("submittedStuff"),
+      textOutput("mapDetails"),
+      p(),
       
-      sliderInput("fromInte", "From interval", min = 0, max = 60 * 45, step = 300, value = fromInte),
-      sliderInput("toInte", "To interval", min = 0, max = 60 * 45, step = 300, value = toInte),
-      sliderInput("betweenInte", "Between interval", min = 0, max = 60 * 45, step = 300, value = betweenInte),
-      sliderInput("distInte", "Location Interval", min = 1, max = 20, step = 1, value = distInte)
+      sliderInput("fromInte", "From interval", min = 0, max = 60 * 45, step = 300, value = 60 * 10),
+      sliderInput("toInte", "To interval", min = 0, max = 60 * 45, step = 300, value = 60 * 5),
+      sliderInput("betweenInte", "Between interval", min = 0, max = 60 * 45, step = 300, value = 60 * 5),
+      sliderInput("distInte", "Location Interval", min = 1, max = 20, step = 1, value = 2)
     ),
-    
     mainPanel(
       tabsetPanel(type = "tabs",
                   tabPanel("Map", leafletOutput("map", height = 850)), # output the map, should check if height is ok with different screens
@@ -321,107 +280,8 @@ ui <- fluidPage(
   )
 )
 
-
-
-
 # app backend
 server <- function(input, output, session) {
-  
-  # This script takes a macaddr, a dataframe of general event information,
-  # and returns a list of two things: 
-  # 1. a dataframe that tells how long a macaddr has stayed for each location
-  # 2. the shortened dataframe of visited locations used in drawing lines
-  # it returns null when the macaddr did not visit the locations properly.
-  # IDEAS: fromLoc and toLoc are groups of locations so you can see how people from dorms go to WU, etc.
-  findIndex <- function(mac, macdf) {
-    # filtering to find each location a macaddr has visited
-    macsTime <- macdf %>% 
-      filter(macaddr == mac)
-    
-    # filtering to find each location a macaddr has stayed
-    timeStayed <- howLong(mac, macsTime)
-    if(is.null(timeStayed)) {
-      return(NULL)
-    }
-    # filtering for locations based on the time intervals above
-    n1 <- which(timeStayed$location == fromLoc & timeStayed$totalTime > input$fromInte)
-    n2 <- which(timeStayed$location == toLoc & timeStayed$totalTime > input$toInte)
-    n3 <- which(timeStayed$location != fromLoc & timeStayed$location != toLoc & timeStayed$totalTime > input$betweenInte)
-    n4 <- c(n1, n2, n3)
-    n4 <- sort(n4) # note that the last location the macaddr visited visited is cut off
-    macsLocs <- timeStayed[n4, ]
-    
-    # dealing with the case that fromLoc is empty string by grabbing everything to see how ppl get to toLoc
-    # if someone moves from A to B, and then A to B again in a later time, maybe display both times?
-    # currently the only way to visualize both paths is by changing the time inputs
-    if(fromLoc == "") {
-      if(!toLoc %in% macsLocs$location) {
-        return(NULL)
-      }
-      indexFrom <- 1
-      indexTo <- match(toLoc, macsTime$location)
-      if(indexFrom == indexTo) {
-        indexTo <- match(toLoc, macsTime[2, ]$location) + indexTo
-        if(is.na(indexTo)) {
-          return(NULL)
-        }
-      }
-      numOnMap <<- numOnMap + 1
-      return(list(timeStayed = timeStayed, macsTime = macsTime[indexFrom:indexTo, ]))
-    }
-    # toLoc is empty string
-    if(toLoc == "") {
-      if(!fromLoc %in% macsLocs$location) {
-        return(NULL)
-      }
-      indexFrom <- match(fromLoc, macsTime$location)
-      indexTo <- length(macsTime$location)
-      if(indexFrom == indexTo) {
-        return(NULL)
-      }
-      numOnMap <<- numOnMap + 1
-      return(list(timeStayed = timeStayed, macsTime = macsTime[indexFrom:indexTo, ]))
-    }
-    
-    # filter out if macaddr does not stay at the locations correctly
-    if(!fromLoc %in% macsLocs$location | !toLoc %in% macsLocs$location) {
-      return(NULL)
-    }
-    # finding when device visited locations
-    indexFrom <- match(fromLoc, macsLocs$location)
-    indexTo <- match(toLoc, macsLocs$location)
-    
-    while(!is.na(indexTo) & !is.na(indexFrom)) {
-      if(indexTo > indexFrom) {
-        # to minimize the distance between the two locations -- that is, for ex,
-        # to filter out if a device starts at perkins, chills in their room
-        # for two hours, goes on East, goes back to west, goes to WU.
-        if(indexTo - indexFrom > input$distInte) {
-          indexFrom <- match(fromLoc, macsLocs[indexFrom+1:length(macsLocs), ]$location) + indexFrom
-          next
-        }
-        break
-      }
-      indexTo <- match(toLoc, macsLocs[indexTo+1:length(macsLocs), ]) 
-    }
-    # macaddr does not visit locations correctly
-    if(is.na(indexTo) | is.na(indexFrom)) {
-      return(NULL)
-    }
-    
-    # by this point, the device has visited the appropriate locations
-    # printing this stuff later/now just to see how many macaddrs were caught by the script for intuition/debugging purposes
-    numOnMap <<- numOnMap + 1
-    #cat(mac, "from:to", indexFrom, indexTo, "\n")
-    
-    # using the time visited, grab the subset of visited locations to viz path from one loc to another
-    indexFrom <- match(macsLocs$startTimeReal[indexFrom], macsTime$realTime)
-    indexTo <- match(macsLocs$startTimeReal[indexTo], macsTime$realTime)
-    macsTime <- macsTime[indexFrom:indexTo, ]
-    return(list(timeStayed = timeStayed, macsTime = macsTime))
-  }
-  
-  
   
   # Colors for movement lines
   from <- 'red'
@@ -445,7 +305,7 @@ server <- function(input, output, session) {
         filter(time.window >= input$time[[1]]) %>% 
         filter(time.window <= input$time[[2]])
       
-      macDF <- findIndex(clickedID, tempCurrMacs)
+      macDF <- findIndex(clickedID, tempCurrMacs, input$from, input$to, input$fromInte, input$toInte, input$betweenInte, input$distInte)
       
       output$tableMac <- renderDataTable(macDF$macsTime) # view locations that passed the initial time filtering
       output$tableMacTrun <- renderDataTable(macDF$timeStayed) # view movement data
@@ -514,16 +374,22 @@ server <- function(input, output, session) {
   
   # Visualizing the flow of people
   observeEvent({input$submit} ,{
-    
     withProgress(message = "Loading..." , {
-      cat("Calculating with: \n fromInte", input$fromInte, "toInte", input$toInte, "betweenInte", input$betweenInte, "distInte", input$distInte, "\n", 
-          "number of devices", input$num, "fromLoc", input$from, "toLoc", input$to, 
+      initSubmit <- paste("Calculating with: \n fromInte", input$fromInte, "toInte", input$toInte, "betweenInte", input$betweenInte, "distInte", input$distInte, "\n",
+          "number of devices", input$num, "fromLoc", input$from, "toLoc", input$to,
           "time interval", as.character(input$time[[1]]), "to", as.character(input$time[[2]]), "\n")
+      output$submittedStuff <- renderText(initSubmit)
+      
       macsTime <- currMacs %>% 
         filter(time.window >= input$time[[1]]) %>% # this is so that you only view events that happen within the time interval
         filter(time.window <= input$time[[2]]) 
-      uniqMacs <- macsTime %>% # filtering for macs that have visited the to, from locations
-        filter(location %in% c(input$from, input$to))
+      if(input$from != "" & input$to != "") {
+        uniqMacs <- macsTime %>% # filtering for macs that have visited the to, from locations
+          filter(location %in% c(input$from, input$to))
+      } else {
+        uniqMacs <- macsTime
+      }
+      uniqMacs <- macsTime
       uniqMacs <- unique(uniqMacs$macaddr) 
       uniqMacs <- as.character(uniqMacs)
       
@@ -531,18 +397,16 @@ server <- function(input, output, session) {
         clearGroup("severals") 
       
       numOnMap <<- 0
+      locationsData <<- NULL
       
       # looping through each macaddr to determine its movement
       for(i in 1:length(uniqMacs)) { 
-        if(i == input$num) { # to prevent stuff from crashing
+        if(i == as.numeric(input$num)) { # to prevent stuff from crashing
           break
         }
         incProgress(amount = 1/as.numeric(input$num))
         
-        #browser()
-        
-        macDF <- findIndex(uniqMacs[[i]], macsTime)
-        
+        macDF <- findIndex(uniqMacs[[i]], macsTime, input$from, input$to, input$fromInte, input$toInte, input$betweenInte, input$distInte, numOnMap)
         if(is.null(macDF)) {
           next
         }
@@ -581,29 +445,11 @@ server <- function(input, output, session) {
                      weight = 2,
                      opacity = flowOp,
                      color = to)
-        
-        
       } 
-      cat("Number of devices present:", numOnMap, "\n")
+      numSubmit <- paste("Number of devices present:", numOnMap, "\n")
+      output$mapDetails <- renderText(numSubmit)
     })
-    
   })
-  
-  
-  observeEvent(input$submit, {
-    fromLoc <<- input$from
-    toLoc <<- input$to
-    num <<- input$num
-    print("Submit button pressed.")
-  })
-  
-  # Clearing the map of various elements when they are selected/deselected
-  observeEvent({input$flow; input$time[[1]]}, priority = 1, ignoreInit = TRUE, 
-               handlerExpr =  {
-                 leafletProxy("map") %>% 
-                   clearGroup("severals") %>% 
-                   clearGroup("cluster")
-               })
   
   observe({
     if(input$focus == "West"){
@@ -624,8 +470,9 @@ server <- function(input, output, session) {
     }
   })
   
-  output$tableGen <- renderDataTable(locationsData)
-  
+  observeEvent(input$submit ,{
+    output$tableGen <- renderDataTable(locationsData)
+  })
 }
 
 # Run the application 
