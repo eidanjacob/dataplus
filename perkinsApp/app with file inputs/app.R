@@ -16,7 +16,7 @@ library(RColorBrewer)
 library(maps)
 
 # Global Vars
-wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plots <- NULL
+wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plots <- labelLocations <- NULL
 timeSteps <- c("30 min" = 1800, "1 hr" = 3600, "2 hr" = 7200)
 ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
 
@@ -42,7 +42,7 @@ ui <- fluidPage(
              ),
              tabPanel("Summary",
                       wellPanel(tableOutput("summaryTable"))),
-             tabPanel("Charts",
+             tabPanel("GGanimate",
                       sidebarLayout(
                         sidebarPanel(
                           selectInput("stepSize", "Time Step", 
@@ -65,7 +65,7 @@ server <- function(input, output){
   options(shiny.maxRequestSize=1024^6)
   hideTab("tabs", "Confirm Upload")
   hideTab("tabs", "Summary")
-  hideTab("tabs", "Charts")
+  hideTab("tabs", "GGanimate")
   
   observeEvent(input$read, {
     # The user has indicated they are ready to proceed. 
@@ -117,7 +117,7 @@ server <- function(input, output){
     offsets <<- data.frame(
       t(
         sapply(1:fn, function(i){
-          xOff <- (xRange + 100) * ((i - 1) %% 2)
+          xOff <- (xRange+20) * ((i - 1) %% 2)
           yOff <- (yRange) * floor(i/2 - 1/2)
           return(c(xOff, yOff))
         })
@@ -128,9 +128,9 @@ server <- function(input, output){
     
     xMin <- min(wallsdf$transX)
     yMin <- min(wallsdf$transY)
-    labelLocations <- offsets %>%
-      mutate(xOff = xOff + xMin + xRange) %>%
-      mutate(yOff = yOff + yMin + yRange)
+    labelLocations <<- offsets %>%
+      mutate(xOff = xOff + xMin + xRange/2) %>%
+      mutate(yOff = yOff + yMin + yRange + 50)
     
     wallsdf <- wallsdf %>%
       mutate(transX = transX + offsets[as.character(wallsdf$floor), "xOff"]) %>%
@@ -176,7 +176,7 @@ server <- function(input, output){
   })
   
   suppressWarnings(observeEvent(input$plotsOk, {
-    showTab("tabs", "Charts")
+    showTab("tabs", "GGanimate")
     showTab("tabs", "Summary")
     binByAp <- eventsdf %>% count(ap, sort = TRUE)
     
