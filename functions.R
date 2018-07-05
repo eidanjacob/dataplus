@@ -1,3 +1,7 @@
+library(dplyr)
+library(lubridate)
+library(data.table) # for rleid
+
 # Script that calculates how long a macaddr stayed in some places
 # mac is a macaddr, macdf is dataframe of events
 howLong <- function(mac, macdf) {
@@ -6,26 +10,10 @@ howLong <- function(mac, macdf) {
   
   macLocs$realTimeEnd <- lead(macLocs$realTime, 1)
   macLocs <- macLocs %>% 
-    mutate(timeDiff = difftime(macLocs$realTimeEnd, macLocs$realTime)) # timeDiff is in seconds
-  
-  n <- 1 # unique index tied to groups of locations
-  i <- 1 # row index
-  # function that adds a column that has numbers that will increment when a value before it changes
-  col <- sapply(macLocs$location, function(x) { 
-    if(i != 1) {
-      if (x != macLocs[i-1, ]$location) {
-        n <<- n + 1
-        i <<- i + 1
-        return(n)
-      } else {
-        i <<- i + 1
-        return(n)
-      }
-    } else {
-      i <<- i + 1
-      return(n)
-    }
-  })
+    mutate(timeDiff = as.numeric(difftime(macLocs$realTimeEnd, macLocs$realTime)), units = "secs") # timeDiff is in seconds
+
+  # function that adds a column that has numbers that will increment when the location before it changes
+  col <- rleid(macLocs$location)
   
   macLocs$id <- col
   
@@ -39,7 +27,7 @@ howLong <- function(mac, macdf) {
   # creating column that has the amount of time spent at a locations, in order of visited locations, repeats allowed.
   timeStayed <- macLocs %>% 
     group_by(id, location) %>% 
-    summarise(totalTime = sum(timeDiff))
+    summarise(totalTime = sum(timeDiff), endTimeReal = max(realTime))
   
   timeStart <- macLocs[!duplicated(macLocs$id), ] 
   
@@ -48,26 +36,23 @@ howLong <- function(mac, macdf) {
                       startTimeGeneral = timeStart$time.window, 
                       startTimeReal = timeStart$realTime, 
                       macaddr = timeStart$macaddr)
-  timeStayed[is.na(timeStayed)] <- 0
+  timeStayed$totalTime[is.na(timeStayed$totalTime)] <- 0
   return(timeStayed)
 }
 
 # This script takes a macaddr, a dataframe of general event information,
-# and returns a list of three things: 
+# and returns a list of four things: 
 # 1. a dataframe that tells how long a macaddr has stayed for each location
 # 2. a shortened dataframe of the locations stayed after it has gone through the filtering
 # 3. the shortened dataframe of visited locations used in drawing lines
+# 4. the number of devices on the map
 # it returns null when the macaddr did not visit the locations properly.
 # IDEAS: fromLoc and toLoc are groups of locations so you can see how people from dorms go to WU, etc.
 findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, betweenInte=60*10, distInte=2, numOnMap=0) {
   # filtering to find each location a macaddr has visited
   macsTime <- macdf %>% 
     filter(macaddr == mac)
-  
-  if(!exists("numOnMap")) {
-    numOnMap <- 0
-  }
-  
+
   # filtering to find each location a macaddr has stayed
   timeStayed <- howLong(mac, macsTime)
   if(is.null(timeStayed)) {
@@ -96,8 +81,8 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
         return(NULL)
       }
     }
-    numOnMap <<- numOnMap + 1
-    return(list(timeStayed = timeStayed, macsTime = macsTime[indexFrom:indexTo, ], orig = macsTime))
+    numOnMap <- numOnMap + 1
+    return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime, num = numOnMap))
   }
   # toLoc is empty string
   if(toLoc == "") {
@@ -109,8 +94,8 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
     if(indexFrom == indexTo) {
       return(NULL)
     }
-    numOnMap <<- numOnMap + 1
-    return(list(timeStayed = timeStayed, macsTime = macsTime[indexFrom:indexTo, ]))
+    numOnMap <- numOnMap + 1
+    return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime, num = numOnMap))
   }
   
   # filter out if macaddr does not stay at the locations correctly
@@ -143,13 +128,13 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
   # printing this stuff later/now just to see how many macaddrs were caught by the script for intuition/debugging purposes
   #cat(mac, "from:to", indexFrom, indexTo, "\n")
   
-  numOnMap <<- numOnMap + 1
+  numOnMap <- numOnMap + 1
   
   # using the time visited, grab the subset of visited locations to viz path from one loc to another
   indexFrom2 <- match(macsLocs$startTimeReal[indexFrom], macsTime$realTime)
   indexTo2 <- match(macsLocs$startTimeReal[indexTo], macsTime$realTime)
   macsTime <- macsTime[indexFrom2:indexTo2, ]
-  return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime))
+  return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime, num = numOnMap, indexFrom = indexFrom, indexTo = indexTo))
 }
 
 # Returns the macaddrs that do move within the dataset (can later be changed to time interval)
