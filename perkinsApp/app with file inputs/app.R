@@ -14,6 +14,7 @@ library(gganimate) ## NEED DIFFERENT VERSION
 library(tidyr)
 library(RColorBrewer)
 library(maps)
+library(tweenr)
 
 # Global Vars
 wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plots <- labelLocations <- NULL
@@ -202,9 +203,10 @@ server <- function(input, output){
     fortified <- fortify(voronoiSPDF, region = "id")
     
     plots <<- lapply(timeSteps, function(delta){
-      binnedEvents <- eventsdf[,"ap"] # match events to appropriate bin
+      binnedEvents <- eventsdf # match events to appropriate bin
       binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), 
                                        length = delta, ordered_result = TRUE)
+      
       chartData <- summarise(group_by(binnedEvents, ap, bin), n()) %>%
         complete(bin, ap) %>%
         replace_na(list(`n()` = 0))
@@ -228,6 +230,29 @@ server <- function(input, output){
         geom_text(aes(x = labelLocations[,1],
                       y = labelLocations[,2],
                       label = paste("Floor", floors)))
+
+      # Preparing the points data.
+      macNum <- length(unique(binnedEvents$macaddr)) # number of devices to display on map
+      binnedEvents <- binnedEvents %>% 
+        filter(macaddr %in% unique(binnedEvents$macaddr)[1:macNum])
+      
+      # Matching aps to coordinates.
+      binnedEvents$bin <- as.numeric(binnedEvents$bin)
+      frameNum <- max(as.numeric(binnedEvents$bin))
+      centers <- voronoiSPDF@data 
+      binnedEvents <- full_join(binnedEvents, centers, by = c("ap" = "id"))
+      binnedEvents <- binnedEvents[which(!is.na(binnedEvents$x)), ]
+      binnedEvents <- binnedEvents[which(!is.na(binnedEvents$macaddr)), ]
+      binnedEvents <- binnedEvents %>%
+        mutate(ease = "linear")
+      
+      binnedEvents <- binnedEvents %>% # tweenr requires columns to be trimmed
+        dplyr::select(x, y, bin, macaddr, ease)
+      events_tween <- tween_elements(binnedEvents, "bin", "macaddr", "ease", nframes = frameNum)
+      events_tween$bin <- round(events_tween$bin)
+      
+      p <- p + geom_point(data = events_tween, aes(x = x, y = y, group = .group, frame = bin), color = "blue", alpha = 0.1)
+      
       return(p)
     })
     
