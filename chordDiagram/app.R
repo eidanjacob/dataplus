@@ -12,14 +12,14 @@ validLocations <- read_csv("../allAPs.csv") # aps <-> locations
 
 ui <- fluidPage(
   titlePanel("Chord Diagram Generator"),
-  wellPanel(
+  column(6, wellPanel(
     fileInput("events", "Event Data"),
     actionButton("read", "Go")
-  ),
-  wellPanel(
+  )),
+  column(6, wellPanel(
     uiOutput("chordCheckbox"),
     uiOutput("generateDiag")
-  ),
+  )),
   plotOutput("circleChart")
 )
 
@@ -58,9 +58,10 @@ server <- function(input, output) {
                            to    = rep(locs, each  = length(locs)),
                            value = 0, # To be filled in below
                            stringsAsFactors = FALSE)
+    locEventsdf <- eventsdf %>% filter(location.y %in% locs)
     macs <- unique(eventsdf$macaddr)
     lapply(macs, function(mac){
-      subset <- filter(eventsdf, macaddr == mac)
+      subset <- filter(locEventsdf, macaddr == mac)
       subset <- subset[order(subset$`_time`),]
       lapply(1:(nrow(subset)-1), function(i){
         index <- which(adjList$from == subset$location.y[i] & adjList$to == subset$location.y[i+1])
@@ -80,7 +81,8 @@ server <- function(input, output) {
       filter(to   %in% selLoc) %>%
       filter(from %in% selLoc)
     chordDiagram(adjListSubset)
-  })
+  },
+  width = 1024, height = 1024, res = 128)
 }
 
 # Run the application 
