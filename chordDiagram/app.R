@@ -5,7 +5,7 @@ library(migest)
 library(dplyr)
 library(lubridate)
 # Global vars
-eventsdf <- adjList <- locs <- NULL
+eventsdf <- adjListLocation <- adjListCampus <- locs <- NULL
 coord <- read_csv("../locationsToCoordinates.csv")
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
 validLocations <- read_csv("../allAPs.csv") # aps <-> locations
@@ -18,6 +18,7 @@ ui <- fluidPage(
   )),
   column(6, wellPanel(
     uiOutput("chordCheckbox"),
+    checkboxInput("campus", "By Campus"),
     uiOutput("generateDiag")
   )),
   plotOutput("circleChart")
@@ -54,20 +55,28 @@ server <- function(input, output) {
       checkboxGroupInput("chordLocations", "Locations", choices = locs, inline = TRUE, selected = locs)
     })
     # Adjacency list
-    adjList <<- data.frame(from = rep(locs, times = length(locs)),
-                           to    = rep(locs, each  = length(locs)),
-                           value = 0, # To be filled in below
-                           stringsAsFactors = FALSE)
-    locEventsdf <- eventsdf %>% filter(location.y %in% locs)
+    adjListLocation <<- data.frame(from  = rep(locs, times = length(locs)),
+                                   to    = rep(locs, each  = length(locs)),
+                                   value = 0, # To be filled in below
+                                   stringsAsFactors = FALSE)
+    adjListCampus <<- data.frame(from  = rep(c("East", "West", "Central", "Off"), times = 4),
+                                 to    = rep(c("East", "West", "Central", "Off"), each  = 4),
+                                 value = 0)
     macs <- unique(eventsdf$macaddr)
     lapply(macs, function(mac){
-      subset <- filter(locEventsdf, macaddr == mac)
+      subset <- filter(eventsdf, macaddr == mac)
       subset <- subset[order(subset$`_time`),]
       lapply(1:(nrow(subset)-1), function(i){
-        index <- which(adjList$from == subset$location.y[i] & adjList$to == subset$location.y[i+1])
+        index <- which(adjListLocation$from == subset$location.y[i] & adjListLocation$to == subset$location.y[i+1])
         if(length(index) == 1){
-          if(adjList$to[index] != adjList$from[index]){
-            adjList$value[index] <<- adjList$value[index] + 1
+          if(adjListLocation$to[index] != adjListLocation$from[index]){
+            adjListLocation$value[index] <<- adjListLocation$value[index] + 1
+          }
+        }
+        index <- which(adjListCampus$from == subset$campus[i] & adjListCampus$to == subset$campus[i+1])
+        if(length(index) == 1){
+          if(adjListCampus$to[index] != adjListCampus$from[index]){
+            adjListCampus$value[index] <<- adjListCampus$value[index] + 1
           }
         }
       })
@@ -75,12 +84,16 @@ server <- function(input, output) {
   })
   
   output$circleChart <- renderPlot({
-    req(input$chordLocations)
-    selLoc <- input$chordLocations
-    adjListSubset <- adjList %>%
-      filter(to   %in% selLoc) %>%
-      filter(from %in% selLoc)
-    chordDiagram(adjListSubset)
+    if(input$campus){
+      chordDiagram(adjListCampus)
+    } else {
+      req(input$chordLocations)
+      selLoc <- input$chordLocations
+      adjListLocationSubset <- adjListLocation %>%
+        filter(to   %in% selLoc) %>%
+        filter(from %in% selLoc)
+      chordDiagram(adjListLocationSubset)
+    }
   },
   width = 1024, height = 1024, res = 128)
 }
