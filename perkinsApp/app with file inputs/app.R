@@ -17,7 +17,7 @@ library(maps)
 library(tweenr)
 
 # Global Vars
-wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plots <- labelLocations <- NULL
+wallsdf <- apsdf <- eventsdf <- voronoiSPDF <- floors <- offsets <- plotsP <- plotsM <- labelLocations <- NULL
 timeSteps <- c("30 min" = 1800, "1 hr" = 3600, "2 hr" = 7200)
 ani.options(convert = "C:/Autodesk/ImageMagick-7.0.8-Q16/convert")
 
@@ -51,6 +51,7 @@ ui <- fluidPage(
                           sliderInput("frameDelay", "Frame Delay (ms)",
                                       min = 100, max = 5000, value = 1000,
                                       step = 50),
+                          checkboxInput("displayMacs", "Display Macs", value = TRUE),
                           actionButton("generateGIF", "Run Animation")
                         ),
                         mainPanel(
@@ -202,7 +203,7 @@ server <- function(input, output){
     # convert polys to ggplot2 usable format and save in list
     fortified <- fortify(voronoiSPDF, region = "id")
     
-    plots <<- lapply(timeSteps, function(delta){
+    plotsP <<- lapply(timeSteps, function(delta){
       binnedEvents <- eventsdf # match events to appropriate bin
       binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), 
                                        length = delta, ordered_result = TRUE)
@@ -231,6 +232,14 @@ server <- function(input, output){
                       y = labelLocations[,2],
                       label = paste("Floor", floors)))
 
+      return(p)
+    })
+    
+    plotsM <<- lapply(timeSteps, function(delta){
+      binnedEvents <- eventsdf # match events to appropriate bin
+      binnedEvents$bin <- cut_interval(as.numeric(eventsdf$`_time`), 
+                                       length = delta, ordered_result = TRUE)
+      
       # Preparing the points data.
       macNum <- length(unique(binnedEvents$macaddr)) # number of devices to display on map
       binnedEvents <- binnedEvents %>% 
@@ -251,12 +260,12 @@ server <- function(input, output){
       events_tween <- tween_elements(binnedEvents, "bin", "macaddr", "ease", nframes = frameNum)
       events_tween$bin <- round(events_tween$bin)
       
-      p <- p + geom_point(data = events_tween, aes(x = x, y = y, group = .group, frame = bin), color = "blue", alpha = 0.1)
+      q <- geom_point(data = events_tween, aes(x = x, y = y, group = .group, frame = bin), color = "blue", alpha = 0.1)
       
-      return(p)
+      return(q)
     })
     
-    names(plots) <- names(timeSteps)
+    names(plotsP) <- names(timeSteps)
     hideTab("tabs", "File Upload")
     hideTab("tabs", "Confirm Upload")
   }))
@@ -265,7 +274,11 @@ server <- function(input, output){
     ani.options(interval = input$frameDelay / 1000)
     fileName <- "timeLapse.gif"
     bins <- seq(min(eventsdf$`_time`), max(eventsdf$`_time`), timeSteps[input$stepSize])
-    gg_animate(plots[[as.character(input$stepSize)]], 
+    plot <- plotsP[[as.character(input$stepSize)]]
+    if(input$displayMacs){
+      plot <- plot + plotsM[[as.character(input$stepSize)]]
+    }
+    gg_animate(plot, 
               filename = fileName,
               title_frame = ~ bins[.])
     output$gif <- renderImage({
