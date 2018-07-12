@@ -1,7 +1,5 @@
 # fromLoc toLoc app viz with lines
-# Note: Does not have error handling if text inputs are invalid.
-# BUGS
-# Will crash on ~second submit. Not sure why.
+# Note: Will crash if you submit too many times.
 
 # Load packages:
 # readr, readxl for data frame input
@@ -27,35 +25,35 @@ library(raster)
 
 source("../functions.R")
 
-# # reading in data (project folder is working directory)
-# coord <- read_csv("../locationsToCoordinates.csv")
-# coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
-# validLocations <- read_csv("../allAPs.csv") # aps <-> locations
-# dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
-# 
-# numAPs <- validLocations %>% # number of APs per location
-#   group_by(location) %>%
-#   summarise(num = n())
-# 
-# # splunkData <- read_csv("../eventData.csv")
-# #
-# # # match aps to locations, merge for coordinates
-# # df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
-# #
-# # # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
-# # nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
-# # numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
-# # validLocations$ap = c(NA) # new "flexible" column to store either name or number
-# # validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
-# # validLocations$ap[numMatch] = validLocations$APnum[numMatch]
-# #
-# # validLocations <- merge(coord, validLocations) # link coordinates to locations
-# # # use the new "flexible" ap variable to merge coordinates onto df
-# # df <- merge(df, validLocations, by = "ap") # this is the slow step
-# # write.csv(df, "../mergedData.csv")
-# 
-# df <- read_csv("../mergedData.csv") # this is only commented out to save me time. when viewing this code, put it back in
-# df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
+# reading in data (project folder is working directory)
+coord <- read_csv("../locationsToCoordinates.csv")
+coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
+validLocations <- read_csv("../allAPs.csv") # aps <-> locations
+dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
+
+numAPs <- validLocations %>% # number of APs per location
+  group_by(location) %>%
+  summarise(num = n())
+
+# splunkData <- read_csv("../eventData.csv")
+#
+# # match aps to locations, merge for coordinates
+# df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
+#
+# # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
+# nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
+# numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
+# validLocations$ap = c(NA) # new "flexible" column to store either name or number
+# validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
+# validLocations$ap[numMatch] = validLocations$APnum[numMatch]
+#
+# validLocations <- merge(coord, validLocations) # link coordinates to locations
+# # use the new "flexible" ap variable to merge coordinates onto df
+# df <- merge(df, validLocations, by = "ap") # this is the slow step
+# write.csv(df, "../mergedData.csv")
+
+df <- read_csv("../mergedData.csv") 
+df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
 # draw duke border
 p = Polygon(dukeShape)
@@ -132,18 +130,9 @@ delay = 2700 # in milliseconds
 start.time = (min(df$`_time`))
 end.time = (max(df$`_time`))
 
-# Filtering for all macaddrs that moved/was registered within a certain period of the start time
-# to limit the size of the data set and prevent RStudio from crashing
-# It then samples num random macaddrs
-# period <- 60 * 10 # in seconds
-# num <- 200 # number of macaddrs to visualize
-# inte <- interval(start.time, start.time + period)
-# macaddrInLoc <- df %>%
-#   filter(`_time` %within% inte)
-# macaddrInLoc <- unique(macaddrInLoc$macaddr)
-# #macaddrInLoc <- sample(macaddrInLoc, num) # should be implemented later so that indiv macaddrs that arent in this group can still be tracked
-# df <- df %>% filter(macaddr %in% macaddrInLoc)
-currMacs <- NULL # just to initialize so it exists globally
+# global variables to be used later
+currMacs <- NULL 
+numOnMap <- 0 
 
 popDensityList <- list()
 paletteList <- list()
@@ -153,65 +142,55 @@ end.times <- rep(end.time, length(timeSteps))
 
 colorPal <- "Purples"
 
-for(i in 1:1){
-  timeStep <- timeSteps[i]
-  # Bin populations, calculate densities at each timestep, and cache for future plotting
-  time.windowStart = start.time # time.window for selection
-  populationDensities <- NULL
-  macsToLoc <- NULL
+i <- 1
+timeStep <- timeSteps[i]
+# Bin populations, calculate densities at each timestep, and cache for future plotting
+time.windowStart = start.time # time.window for selection
+populationDensities <- NULL
+macsToLoc <- NULL
+
+while(end.time > time.windowStart){
   
-  while(end.time > time.windowStart){
-    
-    # Filter for time interval
-    selInt = interval(time.windowStart, time.windowStart + timeStep)
-    thisStep <- df %>%
-      filter(`_time` %within% selInt)
-    
-    # Calculate Population Densities
-    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
-    # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
-    locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
-    
-    # Calculate a measure of people / (100 sq meters)
-    densities_area <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    densities_aps  <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / coord$num[x]})
-    densities_both <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area / areaConvert / coord$num[x]})
-    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop)
-    type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N))
-    densitiesToSave <- data.frame("location" = locationBinnedPop$location,
-                                  #"pop" = locationBinnedPop$pop,
-                                  "ap_num" = coord$num,
-                                  "info" = info,
-                                  "type" = type,
-                                  "time.window" = c(time.windowStart))
-    populationDensities <- rbind(populationDensities, densitiesToSave)
-    
-    # For each macaddr, keep track of where it currently is
-    macs <- data.frame("macaddr" = thisStep$macaddr,
-                       "location" = thisStep$location.y,
-                       "long" = thisStep$long,
-                       "lat" = thisStep$lat,
-                       "time.window" = c(time.windowStart),
-                       "realTime" = c(thisStep$`_time`))
-    macs <- macs[order(macs$realTime), ]
-    macsToLoc <- rbind(macsToLoc, macs)
-    
-    end.times[i] <- time.windowStart
-    time.windowStart = time.windowStart + timeStep
-  }
+  # Filter for time interval
+  selInt = interval(time.windowStart, time.windowStart + timeStep)
+  thisStep <- df %>%
+    filter(`_time` %within% selInt)
+  
+  # Calculate Population Densities
+  locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
+  # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
+  locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
+  
+  # Calculate a measure of people / (100 sq meters)
+  densities_area <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
+  info <- c(densities_area)
+  type <- c(rep(1, N))
+  densitiesToSave <- data.frame("location" = locationBinnedPop$location,
+                                #"pop" = locationBinnedPop$pop,
+                                "ap_num" = coord$num,
+                                "info" = info,
+                                "type" = type,
+                                "time.window" = c(time.windowStart))
+  populationDensities <- rbind(populationDensities, densitiesToSave)
+  
+  # For each macaddr, keep track of where it currently is
+  macs <- data.frame("macaddr" = thisStep$macaddr,
+                     "location" = thisStep$location.y,
+                     "long" = thisStep$long,
+                     "lat" = thisStep$lat,
+                     "time.window" = c(time.windowStart),
+                     "realTime" = c(thisStep$`_time`))
+  macs <- macs[order(macs$realTime), ]
+  macsToLoc <- rbind(macsToLoc, macs)
+  
+  end.times[i] <- time.windowStart
+  time.windowStart = time.windowStart + timeStep
+  
   
   # setting up for chloropleth
   palette_area <- colorNumeric(colorPal, (populationDensities %>% filter(type == 1))$info)
-  palette_aps  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 2))$info)
-  palette_both <- colorNumeric(colorPal, (populationDensities %>% filter(type == 3))$info)
-  palette_raw  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 4))$info)
-  palette_area_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 1))$info+1))
-  palette_aps_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 2))$info+1))
-  palette_both_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 3))$info+1))
-  palette_raw_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 4))$info+1))
   
-  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw,
-                              palette_area_log, palette_aps_log, palette_both_log, palette_raw_log)
+  thisStepPaletteList <- list(palette_area)
   
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
@@ -219,13 +198,7 @@ for(i in 1:1){
   macsToLocList[[i]] <- macsToLoc
 }
 
-legendTitles <- c("Population Density (area)",
-                  "Population Density (aps)",
-                  "Population Density (both)",
-                  "Population (raw count)")
-
-
-numOnMap <- 0 # just so it can be used later
+legendTitles <- c("Population Density (area)")
 
 # keeping this here just for reference for when the readme is written
 # fromLoc <- "Perkins" # default
@@ -257,7 +230,7 @@ ui <- fluidPage(
       
       textInput("from", "From location: ", value = "Perkins"),
       textInput("to", "To location: ", value = "WestUnion"),
-      textInput("num", "Number of devices: ", value = 200),
+      numericInput("num", "Number of devices: ", min = 0, max = length(unique(df$macaddr)), value = 200),
       actionButton("submit", "Submit"), # must press submit button and have viz flow checked to enable flow viz
       p(),
       textOutput("submittedStuff"),
@@ -299,7 +272,6 @@ server <- function(input, output, session) {
     clickedGroup <- input$map_shape_click$'group'
     clickedID <- input$map_shape_click$'id'
     if(clickedGroup == "severals") { # Line clicked when visualizing flow
-      #print(clickedID) # print macaddr
       
       tempCurrMacs <- currMacs %>% 
         filter(time.window >= input$time[[1]]) %>% 
@@ -376,9 +348,11 @@ server <- function(input, output, session) {
   observeEvent({input$submit} ,{
     withProgress(message = "Loading..." , {
       initSubmit <- paste("Calculating with: \n fromInte", input$fromInte, "toInte", input$toInte, "betweenInte", input$betweenInte, "distInte", input$distInte, "\n",
-          "number of devices", input$num, "fromLoc", input$from, "toLoc", input$to,
-          "time interval", as.character(input$time[[1]]), "to", as.character(input$time[[2]]), "\n")
+                          "number of devices", input$num, "fromLoc", input$from, "toLoc", input$to,
+                          "time interval", as.character(input$time[[1]]), "to", as.character(input$time[[2]]), "\n")
       output$submittedStuff <- renderText(initSubmit)
+      
+      gc() # Garbage collector! Prevents overuse of memory and crashes!
       
       macsTime <- currMacs %>% 
         filter(time.window >= input$time[[1]]) %>% # this is so that you only view events that happen within the time interval
@@ -389,7 +363,6 @@ server <- function(input, output, session) {
       } else {
         uniqMacs <- macsTime
       }
-      uniqMacs <- macsTime
       uniqMacs <- unique(uniqMacs$macaddr) 
       uniqMacs <- as.character(uniqMacs)
       
@@ -410,8 +383,9 @@ server <- function(input, output, session) {
         if(is.null(macDF)) {
           next
         }
+        numOnMap <<- macDF$num
         macDF <- macDF$macsTime
-        locationsData <<- rbind(locationsData, macDF)
+        locationsData <<- rbind(locationsData, macDF) # for viewing in tabs 
         
         macLabels <- sprintf("macaddr: %s",
                              macDF$macaddr) %>%
@@ -446,9 +420,9 @@ server <- function(input, output, session) {
                      opacity = flowOp,
                      color = to)
       } 
-      numSubmit <- paste("Number of devices present:", numOnMap, "\n")
-      output$mapDetails <- renderText(numSubmit)
     })
+    numSubmit <- paste("Number of devices present:", numOnMap, "\n")
+    output$mapDetails <- renderText(numSubmit)
   })
   
   observe({
@@ -473,6 +447,7 @@ server <- function(input, output, session) {
   observeEvent(input$submit ,{
     output$tableGen <- renderDataTable(locationsData)
   })
+  
 }
 
 # Run the application 
