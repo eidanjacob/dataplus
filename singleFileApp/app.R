@@ -24,35 +24,46 @@ library(geosphere)
 library(raster)
 
 # reading in data (project folder is working directory)
-# coord <- read_csv("../locationsToCoordinates.csv")
-# coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
-# validLocations <- read_csv("../allAPs.csv") # aps <-> locations
-# dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
+coord <- read_csv("../locationsToCoordinates.csv")
+coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
+validLocations <- read_csv("../allAPs.csv") # aps <-> locations
+dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
+
+numAPs <- validLocations %>% # number of APs per location
+  group_by(location) %>%
+  summarise(num = n())
+
+# splunkData <- read_csv("../eventData.csv")
 # 
-# numAPs <- validLocations %>% # number of APs per location
-#   group_by(location) %>%
-#   summarise(num = n())
+# # match aps to locations, merge for coordinates
+# df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
 # 
-# # splunkData <- read_csv("../eventData.csv")
-# #
-# # # match aps to locations, merge for coordinates
-# # df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
-# #
-# # # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
-# # nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
-# # numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
-# # validLocations$ap = c(NA) # new "flexible" column to store either name or number
-# # validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
-# # validLocations$ap[numMatch] = validLocations$APnum[numMatch]
-# #
-# # validLocations <- merge(coord, validLocations) # link coordinates to locations
-# # # use the new "flexible" ap variable to merge coordinates onto df
-# # df <- merge(df, validLocations, by = "ap") # this is the slow step
-# # write.csv(df, "../mergedData.csv")
+# # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
+# nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
+# numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
+# validLocations$ap = c(NA) # new "flexible" column to store either name or number
+# validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
+# validLocations$ap[numMatch] = validLocations$APnum[numMatch]
 # 
-# df <- read_csv("../mergedData.csv") # this is only commented out to save me time. when viewing this code, put it back in
-# df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
+# validLocations <- merge(coord, validLocations) # link coordinates to locations
+# # use the new "flexible" ap variable to merge coordinates onto df
+# df <- merge(df, validLocations, by = "ap") # this is the slow step
 # 
+# # merge with OUI table to identify manufacturers
+# df$prefix <- sapply(df$macaddr, function(mac){
+#   str <- substr(mac, 1, 8)
+#   return(gsub(":", "-", toupper(str)))
+# })
+# oui <- read_csv("../ouiDF.txt")
+# df <- merge(df, oui)
+# write.csv(df, "../mergedData.csv")
+
+
+
+
+df <- read_csv("../mergedData.csv") # this is only commented out to save me time. when viewing this code, put it back in
+df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
+
 # draw duke border
 p = Polygon(dukeShape)
 ps = Polygons(list(p),1)

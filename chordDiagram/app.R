@@ -24,7 +24,6 @@ ui <- fluidPage(
   plotOutput("circleChart")
 )
 
-# Define server logic required to draw a histogram
 server <- function(input, output) {
   
   options(shiny.maxRequestSize=1024^6)
