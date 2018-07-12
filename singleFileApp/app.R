@@ -22,12 +22,14 @@ library(rgdal)
 library(lubridate)
 library(geosphere)
 library(raster)
+library(data.table)
 
 # reading in data (project folder is working directory)
 coord <- read_csv("../locationsToCoordinates.csv")
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
 validLocations <- read_csv("../allAPs.csv") # aps <-> locations
 dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
+bytesData <- read_csv("../bytesData.csv", col_types = "cn?")
 
 numAPs <- validLocations %>% # number of APs per location
   group_by(location) %>%
@@ -58,10 +60,7 @@ numAPs <- validLocations %>% # number of APs per location
 # df <- merge(df, oui)
 # write.csv(df, "../mergedData.csv")
 
-
-
-
-df <- read_csv("../mergedData.csv") # this is only commented out to save me time. when viewing this code, put it back in
+df <- read_csv("../mergedData.csv")
 df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
 # draw duke border
@@ -98,6 +97,10 @@ sapply(1:length(coord$location), function(x){
   SPDF@polygons[[x]]@ID <- coord$location[x]
   SPDF <<- SPDF
 })
+
+# Matching Splunk data with bytes data
+source("../bytesExtractor.R")
+df <- mergeBytesSplunk(bytesData, df)
 
 # Default coordinates that provide overview of entire campus
 defLong <- -78.9272544 # default longitude
@@ -136,14 +139,17 @@ timeSteps = c("1hr" = 60*60, "2hr" = 2*60*60, "4hr" = 4*60*60) # in seconds
 delay = 2700 # in milliseconds
 # ------------------------------
 
-start.time = (min(df$`_time`))
-end.time = (max(df$`_time`))
+tryCatch({start.time = (min(df$time))}, 
+         warning = function(w) {
+           stop(paste0(w, "\n", "Splunk dates and bytes dates don't match up."))
+         })
+end.time = (max(df$time))
 
 # # Filtering for all macaddrs that moved/was registered within a certain period of the start time
 # # to limit the size of the data set and prevent RStudio from crashing
 # # It then samples num random macaddrs
 # period <- 60 * 10 # in seconds
-num <- 200 # number of macaddrs to visualize
+num <- 1000 # number of macaddrs to visualize
 # inte <- interval(start.time, start.time + period)
 # macaddrInLoc <- df %>%
 #   filter(`_time` %within% inte)
@@ -166,25 +172,31 @@ for(i in 1:length(timeSteps)){
   time.windowStart = start.time # time.window for selection
   populationDensities <- NULL
   macsToLoc <- NULL
-
+  
   while(end.time > time.windowStart){
-
+    
     # Filter for time interval
     selInt = interval(time.windowStart, time.windowStart + timeStep)
     thisStep <- df %>%
       filter(`_time` %within% selInt)
-
+    
     # Calculate Population Densities
-    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
+    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0), "bytes" = c(0))
     # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
-
+    # For each location, sum up the total number of bytes
+    locationBinnedPop$bytes <- sapply(locationBinnedPop$location, function(x) {sum(thisStep$TotBytes[thisStep$location.y == x]) / 1000}) # converting to kb
+    
     # Calculate a measure of people / (100 sq meters)
-    densities_area <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    densities_aps  <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / coord$num[x]})
-    densities_both <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area / areaConvert / coord$num[x]})
-    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop)
-    type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N))
+    densities_area  <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
+    densities_aps   <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / coord$num[x]})
+    densities_both  <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area / areaConvert / coord$num[x]})
+    densities_bytes_area <- sapply(1:N, function(x) {locationBinnedPop$bytes[x] / (SPDF@polygons[[x]]@area * areaConvert)})
+    densities_bytes_pop <- sapply(1:N, function(x) {locationBinnedPop$bytes[x] / locationBinnedPop$pop[x]})
+    densities_bytes_pop[is.nan(densities_bytes_pop)] <- 0 # making value 0 when macs == 0
+    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop, 
+              densities_bytes_area, densities_bytes_pop, locationBinnedPop$bytes) 
+    type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N), rep(5, N), rep(6, N), rep(7, N))
     densitiesToSave <- data.frame("location" = locationBinnedPop$location,
                                   #"pop" = locationBinnedPop$pop,
                                   "ap_num" = coord$num,
@@ -192,34 +204,41 @@ for(i in 1:length(timeSteps)){
                                   "type" = type,
                                   "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
-
+    
     # For each macaddr, keep track of where it currently is
     macs <- data.frame("macaddr" = thisStep$macaddr,
                        "location" = thisStep$location.y,
+                       "campus" = thisStep$campus,
                        "long" = thisStep$long,
                        "lat" = thisStep$lat,
                        "time.window" = c(time.windowStart),
                        "realTime" = c(thisStep$`_time`))
     macs <- macs[order(macs$realTime), ]
     macsToLoc <- rbind(macsToLoc, macs)
-
+    
     end.times[i] <- time.windowStart
     time.windowStart = time.windowStart + timeStep
   }
-
+  
   # setting up for chloropleth
   palette_area <- colorNumeric(colorPal, (populationDensities %>% filter(type == 1))$info)
   palette_aps  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 2))$info)
   palette_both <- colorNumeric(colorPal, (populationDensities %>% filter(type == 3))$info)
   palette_raw  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 4))$info)
+  palette_bytes_area  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 5))$info)
+  palette_bytes_pop  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 6))$info)
+  palette_raw_bytes  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 7))$info)
   palette_area_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 1))$info+1))
   palette_aps_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 2))$info+1))
   palette_both_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 3))$info+1))
   palette_raw_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 4))$info+1))
-
-  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw,
-                              palette_area_log, palette_aps_log, palette_both_log, palette_raw_log)
-
+  palette_bytes_area_log  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 5))$info)
+  palette_bytes_pop_log  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 6))$info)
+  palette_raw_bytes_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 7))$info+1))
+  
+  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw, palette_bytes_area, palette_bytes_pop, palette_raw_bytes,
+                              palette_area_log, palette_aps_log, palette_both_log, palette_raw_log, palette_bytes_area_log, palette_bytes_pop_log, palette_raw_bytes_log)
+  
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
   paletteList[[i]] <- thisStepPaletteList
@@ -229,7 +248,10 @@ for(i in 1:length(timeSteps)){
 legendTitles <- c("Population Density (area)",
                   "Population Density (aps)",
                   "Population Density (both)",
-                  "Population (raw count)")
+                  "Population (raw count)",
+                  "Bytes Density (area)", 
+                  "Bytes Density (pop)",
+                  "Bytes (raw count)")
 
 # app user interface
 ui <- fluidPage(
@@ -242,19 +264,23 @@ ui <- fluidPage(
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
       selectInput("select", "View:", choices = c("Population Density (area)" = 1, "Population Density (aps)" = 2, 
-                                                 "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
+                                                 "Population Density (both)" = 3, "Population (raw)" = 4, 
+                                                 "Bytes Density (area)" = 5, "Bytes Density (pop)" = 6, "Bytes (raw)" = 7), selected = 1),
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All"),
       checkboxInput("log", "Log Scale", value = FALSE),
       checkboxInput("flow", "Track flow", value = FALSE),
       conditionalPanel( 
         condition = "input.flow",
+        checkboxInput("removeEW", "Remove Cross Campus Lines", value = FALSE),
         checkboxInput("cluster", "Enable clustering", value = FALSE)
       ),
       checkboxInput("track", "Track Single Macaddr", value = FALSE),
       conditionalPanel( 
         condition = "input.track",
         textInput("mac", "Track", value = "00:b3:62:16:56:05"),
-        actionButton("submitMac", "Submit")
+        actionButton("submitMac", "Submit"),
+        p(),
+        textOutput("canTrack")
       )
     ),
     
@@ -272,7 +298,8 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   include <- reactiveValues(poly = coord$location, # list of locations to be included
-                            singleMac = "00:b3:62:16:56:05") # default macaddr to track
+                            singleMac = "00:b3:62:16:56:05", # default macaddr to track
+                            removeEW = FALSE) 
   
   # Colors for movement lines
   from <- 'red'
@@ -288,8 +315,6 @@ server <- function(input, output, session) {
   polyOp <- 0.5
   
   # Seeing if something was clicked and acting as needed
-  # Note that in conjunction with tracking/flow elements, removing a polygon 
-  # causes the lines to shift as if the macaddr never visited that polygon
   observeEvent(input$map_shape_click, {
     clickedGroup <- input$map_shape_click$'group'
     clickedID <- input$map_shape_click$'id'
@@ -313,8 +338,13 @@ server <- function(input, output, session) {
   
   observeEvent(input$submitMac, { # changing which macaddr to track
     include$singleMac <- input$mac 
-    # note to self: print something if the macaddr is not found in dataset, if they are found,
-    # print the time.windows
+    if(include$singleMac %in% currMacs$macaddr) {
+      txt <- paste0(unique(currMacs %>% 
+                                   filter(macaddr == include$singleMac))$time.window, collapse = "\n")
+      output$canTrack <- renderPrint(cat(txt))
+    } else {
+      output$canTrack <- renderText("Macaddr not found. Note that macaddr must be lowercase.")
+    }
   })
   
   # Creates the initial map
@@ -395,7 +425,16 @@ server <- function(input, output, session) {
   # Visualizing the flow of people
   observe({
     
-    observeEvent({input$time}, {},priority = -1)
+    observeEvent(input$flow, { # sampling num amount of macaddrs
+      uniqMacs <<- unique(currMacs$macaddr)
+      uniqMacs <<- as.character(uniqMacs)
+      uniqMacs <<- sample(uniqMacs, num)
+      print("hello")
+    }, ignoreInit = TRUE, priority = 1)
+    
+    include$removeEW <- input$removeEW
+   
+    observeEvent({input$time}, {}, priority = -1) # here just to trigger this observe; there probably exists a better way to do this
     
     if(input$flow) {
       ##################
@@ -404,13 +443,9 @@ server <- function(input, output, session) {
       # Solution is to uncheck and check the lines box.
       # 
       # IDEAS/NEXT
-      # Hide East to West lines <- def do this
-      #   Try doing above by changing how clicking polygons in and out affect visible lines? - currently half working
       # Search bar that highlights a macaddr's path if present, highlights polygon of last known location otherwise.
       ##################
-      uniqMacs <- unique(currMacs$macaddr)
-      uniqMacs <- as.character(uniqMacs)
-      uniqMacs <- sample(uniqMacs, num) # here just for fun. delete when you're done having fun.
+      
       noMove <- NULL
       
       leafletProxy("map") %>% 
@@ -443,35 +478,26 @@ server <- function(input, output, session) {
                                      location = macsTime$location[[1]])
             noMove <- rbind(noMove, noMoveMacs)
           } else if(length(macsTime$location) != 0) { # drawing movement lines
-            # drawing "broken" paths
-            if((TRUE %in% (!macsTime$location %in% include$poly))) { # one of the locations to be not included was visited by the mac
+            # drawing "broken" paths by checking if one of the locations to be not included was visited by the mac
+            # or the mac went to a different campus. Note that nothing will be drawn if the mac only went to one location on another campus.
+            if((TRUE %in% (!macsTime$location %in% include$poly)) | (length(unique(macsTime$campus)) > 1 & include$removeEW)   ) {
               n <- 1 # unique index tied to groups of locations
               i <- 1 # row index
+              
               # function that adds a column that has numbers that will increment when a value before it changes
-              col <- sapply(macsTime$location, function(x) {
-                if(i != 1) {
-                  if (x != macsTime[i-1, ]$location & !x %in% include$poly) {
-                    n <<- n + 1
-                    i <<- i + 1
-                    return(n)
-                  } else {
-                    i <<- i + 1
-                    return(n)
-                  }
-                } else {
-                  i <<- i + 1
-                  return(n)
-                }
-              })
+              if(TRUE %in% (!macsTime$location %in% include$poly)) {
+                col <- rleid(macsTime$location)
+              } else {
+                col <- rleid(macsTime$campus)
+              }
               macsTime$id <- col
-              #macsTime <- macsTime[which(macsTime$location %in% include$poly), ] 
               splitPaths <- split(macsTime, f = macsTime$id) # list of individual paths that resulted from breaking it up into pieces
               allLines <- NULL
               if(length(splitPaths) == 0) {
                 next
               }
               for(j in 1:length(splitPaths)) { # making lines and putting them into a SLDF in order to be associated with the correct macaddr
-                l <- Line(splitPaths[[j]][3:4])
+                l <- Line(subset(splitPaths[[j]], select=c("long", "lat")))
                 allLines <- c(allLines, l)
               }
               l2 <- Lines(allLines, ID = macsTime$macaddr[[1]])

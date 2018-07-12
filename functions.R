@@ -2,23 +2,31 @@ library(dplyr)
 library(lubridate)
 library(data.table) # for rleid
 
-# Script that calculates how long a macaddr stayed in some places
-# mac is a macaddr, macdf is dataframe of events
+# Script that calculates how long a macaddr stayed in each place it visited
+# mac is a macaddr (character), macdf is dataframe of events
 howLong <- function(mac, macdf) {
+  if(!"realTime" %in% names(macdf)) {
+    macdf <- macdf %>% 
+      rename(realTime = `_time`,
+             location = location.y) 
+  }
+  if(!mac %in% unique(macdf$macaddr)) {
+    return(NULL)
+  }
+  
   macLocs <- macdf %>%
     filter(macaddr == mac)
-  
+  macLocs <- macLocs[order(macLocs$realTime), ]
   macLocs$realTimeEnd <- lead(macLocs$realTime, 1)
   macLocs <- macLocs %>% 
-    mutate(timeDiff = as.numeric(difftime(macLocs$realTimeEnd, macLocs$realTime)), units = "secs") # timeDiff is in seconds
+    mutate(timeDiff = as.numeric(difftime(macLocs$realTimeEnd, macLocs$realTime, units = "secs"))) # timeDiff is in seconds
 
   # function that adds a column that has numbers that will increment when the location before it changes
   col <- rleid(macLocs$location)
-  
   macLocs$id <- col
   
   # if a macaddr has only visited one/less than one location
-  if(length(macLocs$id) <= 1) {
+  if(length(unique(macLocs$id)) <= 1) {
     return(NULL)
   }
   
@@ -43,11 +51,12 @@ howLong <- function(mac, macdf) {
 # This script takes a macaddr, a dataframe of general event information,
 # and returns a list of four things: 
 # 1. a dataframe that tells how long a macaddr has stayed for each location
-# 2. a shortened dataframe of the locations stayed after it has gone through the filtering
+# 2. 1. after it has gone through the filtering
 # 3. the shortened dataframe of visited locations used in drawing lines
 # 4. the number of devices on the map
-# it returns null when the macaddr did not visit the locations properly.
-# IDEAS: fromLoc and toLoc are groups of locations so you can see how people from dorms go to WU, etc.
+# It returns null when the macaddr did not visit the locations properly.
+# fromLoc and toLoc are the names of locations.
+# See readme for information on the inte variables.
 findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, betweenInte=60*10, distInte=2, numOnMap=0) {
   # filtering to find each location a macaddr has visited
   macsTime <- macdf %>% 
@@ -67,8 +76,8 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
   macsLocs <- timeStayed[n4, ]
   
   # dealing with the case that fromLoc is empty string by grabbing everything to see how ppl get to toLoc
-  # if someone moves from A to B, and then A to B again in a later time, maybe display both times?
-  # currently the only way to visualize both paths is by changing the time inputs
+  # if someone moves from A to B, and then A to B again in a later time, only the first path is visualized.
+  # currently the only way to visualize both paths (not at once) is by changing the time inputs
   if(fromLoc == "") {
     if(!toLoc %in% macsLocs$location) {
       return(NULL)
@@ -82,7 +91,7 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
       }
     }
     numOnMap <- numOnMap + 1
-    return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime, num = numOnMap))
+    return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime[indexFrom:indexTo, ], num = numOnMap))
   }
   # toLoc is empty string
   if(toLoc == "") {
@@ -95,7 +104,7 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
       return(NULL)
     }
     numOnMap <- numOnMap + 1
-    return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime, num = numOnMap))
+    return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime[indexFrom:indexTo, ], num = numOnMap))
   }
   
   # filter out if macaddr does not stay at the locations correctly
@@ -125,9 +134,6 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
   }
   
   # by this point, the device has visited the appropriate locations
-  # printing this stuff later/now just to see how many macaddrs were caught by the script for intuition/debugging purposes
-  #cat(mac, "from:to", indexFrom, indexTo, "\n")
-  
   numOnMap <- numOnMap + 1
   
   # using the time visited, grab the subset of visited locations to viz path from one loc to another
@@ -137,9 +143,11 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
   return(list(timeStayed = timeStayed, orig = macsLocs, macsTime = macsTime, num = numOnMap, indexFrom = indexFrom, indexTo = indexTo))
 }
 
-# Returns the macaddrs that do move within the dataset (can later be changed to time interval)
-doesMove <- function(df) {
+# Returns the macaddrs that move within the dataset during a time interval
+# df is newly cleaned splunk data
+doesMove <- function(df, inte = interval(min(df$`_time`), max(df$`_time`))) {
   temp <- df %>% # counts how many times a mac visited a place
+    filter(`_time` %within% inte) %>% 
     group_by(macaddr,location) %>% 
     summarise(num = n())
   temp <- temp %>% # counts how many different places a mac visited
@@ -147,4 +155,35 @@ doesMove <- function(df) {
     summarise(num = n())
   temp <- temp[which(temp$num != 1), ]
   return(temp$macaddr)
+}
+
+# Takes filename corresponding to Splunk data and cleans it and links it appropriately. Will also write it to a file if the line is not commented out.
+# validLocations is a dataframe that matches aps to locations
+# A version of this exists in many of the apps, but is replicated here for future reference.
+writeSplunk <- function(splunkFile, ouiFile, validLocations) {
+  df <- read_csv(splunkFile)
+  
+  # match aps to locations, merge for coordinates
+  df <- df[!is.na(df$ap),] # remove observations with no ap
+  
+  # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
+  nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
+  numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
+  validLocations$ap = c(NA) # new "flexible" column to store either name or number
+  validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
+  validLocations$ap[numMatch] = validLocations$APnum[numMatch]
+  
+  validLocations <- merge(coord, validLocations) # link coordinates to locations
+  # use the new "flexible" ap variable to merge coordinates onto df
+  df <- merge(df, validLocations, by = "ap") # this is the slow step
+  # merge with OUI table to identify manufacturers
+  df$prefix <- sapply(df$macaddr, function(mac){
+    str <- substr(mac, 1, 8)
+    return(gsub(":", "-", toupper(str)))
+  })
+  oui <- read_csv(ouiFile)
+  df <- merge(df, oui)
+  # write.csv(df, "../mergedData.csv")
+  
+  return(df)
 }
