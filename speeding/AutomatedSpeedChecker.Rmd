@@ -1,0 +1,51 @@
+---
+title: "Automated Speed Checker"
+author: "Eidan Jacob"
+date: "July 13, 2018"
+output: html_document
+---
+
+## Speed Checking
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE)
+library(readr)
+library(dplyr)
+library(sp)
+library(rgdal)
+library(lubridate)
+library(raster)
+library(deldir)
+```
+
+Read shape file and calculate adjacency matrix for locations to reduce false positive rates.
+```{r}
+coord <- read_csv("../locationsToCoordinates.csv")
+# calculating voronoi cells and converting to polygons to plot on map
+z <- deldir(coord$long, coord$lat) # computes cells
+# convert cell info to spatial data frame (polygons)
+w <- tile.list(z)
+polys <- vector(mode="list", length=length(w))
+for (i in seq(along=polys)) {
+  pcrds <- cbind(w[[i]]$x, w[[i]]$y)
+  pcrds <- rbind(pcrds, pcrds[1,])
+  polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
+}
+SP <- SpatialPolygons(polys)
+for(x in 1:nrow(coord)){
+  SP@polygons[[x]]@ID <- as.character(x)
+}
+SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
+# tag polygons with location name
+SPDF@data$ID = coord$location
+a <- sapply(1:length(coord$location), function(x){
+  SPDF@polygons[[x]]@ID <- coord$location[x]
+  SPDF <<- SPDF
+})
+adjTable <- gTouches(SPDF, byid = TRUE)
+```
+
+Set up dates to check:
+```{r}
+dates <- paste0("../data-plus-2018_wireless-ap-logs_201804", as.character(18:30))
+```
+

@@ -1,0 +1,67 @@
+---
+title: "Speeding"
+author: "Eidan Jacob"
+date: "June 7, 2018"
+output: html_document
+---
+
+```{r, warning = FALSE}
+library(readr)
+library(geosphere)
+library(dplyr)
+```
+
+```{r, cache = TRUE, warning = FALSE, eval = FALSE, include = FALSE}
+# reading in data (project folder is working directory)
+coord <- read_csv("./locationsToCoordinates.csv") # locations <-> coordinates
+coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
+splunkData <- read_csv("./eventData.csv") 
+validLocations <- read_csv("./locationsValid", col_types = cols(X1 = col_skip())) # aps <-> locations
+
+# match aps to locations, merge for coordinates
+splunkdf <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
+
+# Some aps are in splunk data with name, some with number - code below matches location using whichever is available
+nameMatch = which(validLocations$APname %in% splunkdf$ap) # find which aps have their name in the data
+numMatch = which(validLocations$APnum %in% splunkdf$ap) # find which aps have their number in the data
+validLocations$ap = c(NA) # new "flexible" column to store either name or number
+validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
+validLocations$ap[numMatch] = validLocations$APnum[numMatch]
+
+validLocations <- merge(coord, validLocations) # link coordinates to locations
+# use the new "flexible" ap variable to merge coordinates onto splunkdf
+splunkdf <- merge(splunkdf, validLocations, by = "ap") # this is the slow step
+```
+
+```{r}
+eventData <- read_csv("./mergedData.csv")
+report <- function(index, mac, speeds){
+  string <- paste("MAC", mac, "at", speeds[[2]]$location[index], speeds[[2]]$time[index], 
+                  "then at", speeds[[2]]$location[index + 1], speeds[[2]]$time[index + 1],
+                  "speed:", speeds[[1]][index], "m/s.")
+  print(string)
+}
+
+speedLimit <- function(data, limit){
+  
+  eventData <- data[order(data$macaddr),]
+  MACS <- unique(eventData$macaddr)
+  a <- sapply(MACS, function(mac){
+    speeds <- speedR(mac, eventData)
+    if(is.null(speeds)){
+      return()
+    }
+    indices <- which(speeds[[1]] == Inf | speeds[[1]] > limit)
+    a <- sapply(indices, "report", mac, speeds)
+  })
+  print("Done.")
+}
+```
+
+
+```{r, cache = TRUE}
+splunkdf <- read_csv("./mergedData.csv")
+names(splunkdf[9]) <- "location"
+speedLimit(splunkdf, 10)
+```
+
