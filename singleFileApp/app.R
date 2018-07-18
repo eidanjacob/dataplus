@@ -1,5 +1,7 @@
 # The original, with flow viz and mac tracking
-# Note: Does not have error handling if text inputs are invalid.
+# BUGS
+# Polygons will be on top of lines when they are redrawn when you change time steps and view
+# Solution is to uncheck and check the lines box.
 
 # Load packages:
 # readr, readxl for data frame input
@@ -10,6 +12,7 @@
 # sp, rgdal for drawing polygons
 # lubridate for easy handling of times and dates
 # geosphere for haversine formula (calculate distance on sphere)
+# data.table for rleid function - indexing consecuitive locations
 
 library(readr)
 library(readxl)
@@ -29,7 +32,6 @@ coord <- read_csv("../locationsToCoordinates.csv")
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
 validLocations <- read_csv("../allAPs.csv") # aps <-> locations
 dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
-bytesData <- read_csv("../bytesData.csv", col_types = "cn?")
 
 numAPs <- validLocations %>% # number of APs per location
   group_by(location) %>%
@@ -60,7 +62,15 @@ numAPs <- validLocations %>% # number of APs per location
 # df <- merge(df, oui)
 # write.csv(df, "../mergedData.csv")
 
-df <- read_csv("../mergedData.csv")
+# reading in data from directory
+df <- NULL
+directory <- "../data" # name of directory with data
+files <- list.files(directory, full.names = TRUE)
+lapply(files, function(fname) {
+  df <<- rbind(df, read_csv(paste0(fname)))
+})
+
+#df <- read_csv("../mergedData0419.csv")
 df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
 # draw duke border
@@ -97,10 +107,6 @@ sapply(1:length(coord$location), function(x){
   SPDF@polygons[[x]]@ID <- coord$location[x]
   SPDF <<- SPDF
 })
-
-# Matching Splunk data with bytes data
-source("../bytesExtractor.R")
-df <- mergeBytesSplunk(bytesData, df)
 
 # Default coordinates that provide overview of entire campus
 defLong <- -78.9272544 # default longitude
@@ -139,23 +145,13 @@ timeSteps = c("1hr" = 60*60, "2hr" = 2*60*60, "4hr" = 4*60*60) # in seconds
 delay = 2700 # in milliseconds
 # ------------------------------
 
-tryCatch({start.time = (min(df$time))}, 
-         warning = function(w) {
-           stop(paste0(w, "\n", "Splunk dates and bytes dates don't match up."))
-         })
-end.time = (max(df$time))
+start.time = (min(df$`_time`))
+end.time = (max(df$`_time`))
 
 # # Filtering for all macaddrs that moved/was registered within a certain period of the start time
 # # to limit the size of the data set and prevent RStudio from crashing
-# # It then samples num random macaddrs
-# period <- 60 * 10 # in seconds
+# # It then samples num random macaddrs later in the code
 num <- 1000 # number of macaddrs to visualize
-# inte <- interval(start.time, start.time + period)
-# macaddrInLoc <- df %>%
-#   filter(`_time` %within% inte)
-# macaddrInLoc <- unique(macaddrInLoc$macaddr)
-# #macaddrInLoc <- sample(macaddrInLoc, num) # should be implemented later so that indiv macaddrs that arent in this group can still be tracked
-# df <- df %>% filter(macaddr %in% macaddrInLoc)
 currMacs <- NULL # just to initialize so it exists globally
 
 popDensityList <- list()
@@ -181,22 +177,16 @@ for(i in 1:length(timeSteps)){
       filter(`_time` %within% selInt)
     
     # Calculate Population Densities
-    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0), "bytes" = c(0))
+    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
     # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
-    # For each location, sum up the total number of bytes
-    locationBinnedPop$bytes <- sapply(locationBinnedPop$location, function(x) {sum(thisStep$TotBytes[thisStep$location.y == x]) / 1000}) # converting to kb
-    
+
     # Calculate a measure of people / (100 sq meters)
     densities_area  <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
     densities_aps   <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / coord$num[x]})
     densities_both  <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area / areaConvert / coord$num[x]})
-    densities_bytes_area <- sapply(1:N, function(x) {locationBinnedPop$bytes[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-    densities_bytes_pop <- sapply(1:N, function(x) {locationBinnedPop$bytes[x] / locationBinnedPop$pop[x]})
-    densities_bytes_pop[is.nan(densities_bytes_pop)] <- 0 # making value 0 when macs == 0
-    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop, 
-              densities_bytes_area, densities_bytes_pop, locationBinnedPop$bytes) 
-    type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N), rep(5, N), rep(6, N), rep(7, N))
+    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop) 
+    type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N))
     densitiesToSave <- data.frame("location" = locationBinnedPop$location,
                                   #"pop" = locationBinnedPop$pop,
                                   "ap_num" = coord$num,
@@ -225,19 +215,13 @@ for(i in 1:length(timeSteps)){
   palette_aps  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 2))$info)
   palette_both <- colorNumeric(colorPal, (populationDensities %>% filter(type == 3))$info)
   palette_raw  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 4))$info)
-  palette_bytes_area  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 5))$info)
-  palette_bytes_pop  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 6))$info)
-  palette_raw_bytes  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 7))$info)
   palette_area_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 1))$info+1))
   palette_aps_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 2))$info+1))
   palette_both_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 3))$info+1))
   palette_raw_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 4))$info+1))
-  palette_bytes_area_log  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 5))$info)
-  palette_bytes_pop_log  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 6))$info)
-  palette_raw_bytes_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 7))$info+1))
-  
-  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw, palette_bytes_area, palette_bytes_pop, palette_raw_bytes,
-                              palette_area_log, palette_aps_log, palette_both_log, palette_raw_log, palette_bytes_area_log, palette_bytes_pop_log, palette_raw_bytes_log)
+
+  thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw,
+                              palette_area_log, palette_aps_log, palette_both_log, palette_raw_log)
   
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
@@ -248,10 +232,7 @@ for(i in 1:length(timeSteps)){
 legendTitles <- c("Population Density (area)",
                   "Population Density (aps)",
                   "Population Density (both)",
-                  "Population (raw count)",
-                  "Bytes Density (area)", 
-                  "Bytes Density (pop)",
-                  "Bytes (raw count)")
+                  "Population (raw count)")
 
 # app user interface
 ui <- fluidPage(
@@ -264,8 +245,7 @@ ui <- fluidPage(
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
       selectInput("select", "View:", choices = c("Population Density (area)" = 1, "Population Density (aps)" = 2, 
-                                                 "Population Density (both)" = 3, "Population (raw)" = 4, 
-                                                 "Bytes Density (area)" = 5, "Bytes Density (pop)" = 6, "Bytes (raw)" = 7), selected = 1),
+                                                 "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All"),
       checkboxInput("log", "Log Scale", value = FALSE),
       checkboxInput("flow", "Track flow", value = FALSE),
@@ -437,15 +417,6 @@ server <- function(input, output, session) {
     observeEvent({input$time}, {}, priority = -1) # here just to trigger this observe; there probably exists a better way to do this
     
     if(input$flow) {
-      ##################
-      # BUGS
-      # Polygons will be on top of lines when they are redrawn when you change time steps and view
-      # Solution is to uncheck and check the lines box.
-      # 
-      # IDEAS/NEXT
-      # Search bar that highlights a macaddr's path if present, highlights polygon of last known location otherwise.
-      ##################
-      
       noMove <- NULL
       
       leafletProxy("map") %>% 

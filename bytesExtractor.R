@@ -25,13 +25,13 @@ writeBytes <- function(raw="./data-plus-2018_wireless-bytes_20180419-", startTim
   
   incre <- 0
   for(i in nums){ # combining each minutes' data
-    dataRaw <- read.csv(paste0(raw, as.character(i)))
+    dataRaw <- read_csv(paste0(raw, as.character(i)), col_types = "cn")
     dataRaw$time <- currTime + incre
     bytesData <- rbind(bytesData, dataRaw)
     incre <- incre + 60 * 5 # since each file represents 5 minutes
   }
   
-  #write.csv(bytesData, paste0("./bytesData", startDate, ".csv"), row.names = F) 
+  write.csv(bytesData, paste0("./bytesData", startDate, ".csv"), row.names = F) 
   
   return(bytesData)
 }
