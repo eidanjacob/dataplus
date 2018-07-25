@@ -5,6 +5,15 @@ library(data.table) # for rleid
 # Script that calculates how long a macaddr stayed in each place it visited
 # mac is a macaddr (character), macdf is dataframe of events
 howLong <- function(mac, macdf) {
+  ############
+  # Note that this seems to be a better way of calculating timeDiff than the 
+  # stuff below does.
+  # macdf <- macdf %>% # creating column referencing the next location
+  #   group_by(macaddr) %>% 
+  #   mutate(nextTime = lead(`_time`, order_by = macaddr), # quick note that this seems to be more efficient than using the howLong function in functions.R 
+  #          timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>% 
+  #   rename(fromLoc = location.y)
+  ############
   if(!"realTime" %in% names(macdf)) {
     macdf <- macdf %>% 
       rename(realTime = `_time`,
@@ -126,7 +135,7 @@ findIndex <- function(mac, macdf, fromLoc, toLoc, fromInte=60*5, toInte=60*5, be
       }
       break
     }
-    indexTo <- match(toLoc, macsLocs[indexTo+1:length(macsLocs), ]) 
+    indexTo <- match(toLoc, macsLocs[indexTo+1:length(macsLocs), ]$location) + indexTo
   }
   # macaddr does not visit locations correctly
   if(is.na(indexTo) | is.na(indexFrom)) {
@@ -160,7 +169,7 @@ doesMove <- function(df, inte = interval(min(df$`_time`), max(df$`_time`))) {
 # Takes filename corresponding to Splunk data and cleans it and links it appropriately. Will also write it to a file if the line is not commented out.
 # validLocations is a dataframe that matches aps to locations
 # A version of this exists in many of the apps, but is replicated here for future reference.
-writeSplunk <- function(splunkFile, ouiFile, validLocations) {
+writeSplunk <- function(splunkFile, ouiFile, validLocations, coord) {
   df <- read_csv(splunkFile)
   
   # match aps to locations, merge for coordinates
@@ -183,7 +192,7 @@ writeSplunk <- function(splunkFile, ouiFile, validLocations) {
   })
   oui <- read_csv(ouiFile)
   df <- merge(df, oui)
-  # write.csv(df, "../mergedData.csv")
+  #write.csv(df, "../mergedData.csv")
   
   return(df)
 }

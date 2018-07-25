@@ -1,0 +1,163 @@
+---
+title: "Fun Plots"
+author: "Justina Zou"
+date: "July 19, 2018"
+output: html_document
+---
+
+```{r setup, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width=12, fig.height=8)
+library(readr) # to read in csv files
+library(dplyr) # to process/clean data
+library(ggplot2) # to plot
+df0419 <- read_csv("data/mergedData0419.csv") # dataset we are using
+```
+
+## Variables and parameters
+
+```{r vars}
+mainSSID <- c("Dukeblue", "DukeVisitor", "DukeOpen", "eduroam") # most "important" ssids
+dorms <- c("Edens", "Wannamaker", "Kilgo", "Few", "Keohane", "CrowellQuad", "Craven",
+            "Jarvis", "Trinity", "Giles", "Wilson", "Brown", "Alspaugh", "Pegram", 
+            "EastHouse", "Randolph", "Epworth", "Southgate", "GilbertAddoms", "Bassett")
+```
+
+## Filtering dataframe for plotting
+
+```{r filters}
+# For top 5 APs by location
+dfap <- df0419 %>% # seeing top events by location by ap
+  group_by(ap, location.y, campus) %>%
+  summarise(n = n())
+dfaptrun <- dfap %>%
+  group_by(location.y) %>%
+  top_n(n=5, wt = n)
+locs <- dfaptrun %>% 
+  group_by(location.y) %>% 
+  summarise(n = n())
+
+# For SSID usage by campus
+dfssid <- df0419 %>% # seeing if ssid events change by campus
+  group_by(ssid, campus) %>% 
+  summarise(n = n())
+dfVO <- df0419 %>% # seeing if ssid events change by locations off campus
+  filter(campus == "Off") %>% 
+  group_by(ssid, location.y) %>%
+  summarise(n = n())
+
+# For slotnum usage by campus
+dfapslots <- df0419 %>% 
+  group_by(ap, slotnum, campus, location.y) %>% 
+  summarise(n = n()) 
+
+# For slotnum usage by org
+dfOrgs <- df0419 %>% # first group by both macaddr and org to get unique num of orgs
+  group_by(macaddr, org) %>% 
+  summarise(n=n())
+dfOrgs <- dfOrgs %>% # getting most popular orgs
+  group_by(org) %>% 
+  summarise(n = n())
+dfOrgs <- dfOrgs[order(dfOrgs$n, decreasing = TRUE), ] # sorting
+dfmacslots <- df0419 %>% 
+  group_by(macaddr, org, slotnum) %>%
+  summarise(n = n())
+```
+
+## Top 5 APs for each location
+
+### Initial filtering
+```{r}
+locs <- locs[locs$n == 5, ]
+dfaptrun <- dfaptrun[dfaptrun$location.y %in% locs$location.y, ] # getting rid of locations that don't have at least 5 aps
+dfaptrun <- dfaptrun[order(dfaptrun$n,dfaptrun$location.y),]
+dfaptrun$ap <- factor(dfaptrun$ap, levels = dfaptrun$ap[order(dfaptrun$n)]) # reordering factors for nicer looking graph
+```
+
+### Plotting
+
+This plot will likely not display due to its size.
+
+```{r}
+ggplot(dfaptrun %>% filter(campus == "West"), aes(x=ap,y=n)) + 
+  geom_col(aes(fill=location.y)) + 
+  labs(title = "top events by location by ap") +
+  theme_bw() + 
+  coord_flip() + 
+  facet_wrap(.~location.y, scales = "free") + # notice differing scales
+  theme(legend.position = "bottom")
+```
+
+## SSID usage by campus
+
+```{r}
+ggplot(data = dfssid %>% 
+         filter(ssid %in% mainSSID), aes(x=ssid,y=n)) + 
+  geom_col(aes(fill = campus)) +
+  labs(title = "0419 ssid(truncat) usage by campus") + 
+  facet_wrap(.~campus, scales = "free_y") + # notice that y scale is slightly different for each campus
+  theme_bw()
+ggplot(data = dfVO %>%
+         filter(ssid %in% mainSSID), aes(x=ssid, y= n)) + 
+  geom_col(aes(fill = location.y)) +
+  facet_wrap(.~location.y, scales = "free_y") + # notice that y scale is slightly different for each location
+  labs(title = "0419 ssid usage by offcampus locations") +
+  theme_bw()
+```
+
+## Plotting slot 0 by slot 1 usage
+
+### Initial filtering
+
+```{r}
+# For slotnum usage by campus
+dfapslotsno2 <- dfapslots[dfapslots$slotnum != 2, ] # filtering out slotnum 2 because it's much rarer
+dfapslotsno2 <- merge.data.frame(dfapslotsno2[dfapslotsno2$slotnum == 0, ], 
+                                 dfapslotsno2[dfapslotsno2$slotnum == 1, ], 
+                                 by = "ap")
+dfapslotsno2 <- dfapslotsno2 %>% # view the ratio of slot 0 / slot 1 events
+  mutate(ratio = n.x / n.y)
+isDorm <- lapply(dfapslotsno2$location.y.x, function(x) { # labeling if location is dorm
+  if(x %in% dorms) {
+    return("dorm")
+  } else {
+    return("notdorm")
+    }
+})
+dfapslotsno2$isDorm <- isDorm
+
+# For slotnum usage by orgs
+dfmacslots <- dfmacslots[dfmacslots$slotnum != 2, ] # filtering out slotnum 2 because it's much rarer
+dfmacslots <- merge.data.frame(dfmacslots[dfmacslots$slotnum == 0, ], # note that orgs which do not have any slot 0 events get filtered out
+                               dfmacslots[dfmacslots$slotnum == 1, ], 
+                               by = "macaddr")
+dfmacslots <- dfmacslots %>% # view the ratio of slot 0 / slot 1 events
+  mutate(ratio = n.x / n.y)
+```
+
+### By campus
+
+```{r}
+ggplot(data = dfapslotsno2, aes(x=n.x, y= n.y)) + 
+  geom_point(aes(color = campus.x)) + 
+  labs(x="num of slot 0 events", y= "num of slot 1 events") + 
+  coord_fixed() + 
+  facet_wrap(.~campus.x) + 
+  theme_bw()
+ggplot(dfapslotsno2, aes(x=n.x, y=n.y)) + geom_point(aes(color = campus.x)) + 
+  labs(x="num of slot 0 events", y= "num of slot 1 events", title = "separating by dorms and not dorms") + 
+  coord_fixed() + 
+  facet_wrap(.~as.character(isDorm)) + 
+  theme_bw()
+```
+
+### By top 15 orgs
+
+```{r}
+ggplot(dfmacslots %>% filter(org.x %in% dfOrgs$org[1:15]), aes(x = n.x, y = n.y)) +
+  geom_point(aes(color = org.x)) +
+  labs(title = "slotnums by macaddr", x = "num of slot0 events", y = "num of slot1 events") +
+  coord_fixed() + 
+  theme_bw() + 
+  facet_wrap(.~org.x, ncol = 6) +
+  scale_y_continuous(limits = c(0,1000)) # reducing visible plot for clarity
+```

@@ -1,0 +1,180 @@
+---
+title: "Testing for Frequent Switching"
+author: "Justina Zou"
+date: "July 20, 2018"
+output: html_document
+---
+
+```{r setup, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width=12, fig.height=8)
+library(readr) # to read in csv files
+library(dplyr) # to process/clean data
+library(ggplot2) # to plot
+df0419 <- read_csv("data/mergedData0419.csv") # dataset we are using
+```
+
+## Testing for frequent switching
+
+This is done by calculating the time difference between the same macaddr appearing in events. 
+If the time is greater than some threshold, then it is flagged.
+
+### Initial
+
+```{r init}
+laptopsOrgs <- c("Microsoft Corporation", "ASUSTek COMPUTER INC.", "Dell Inc.", "Liteon Technology Corporation") # orgs that are likely only tied to laptops
+dflap <- df0419 %>% # filtering for laptops
+  filter(org %in% laptopsOrgs) %>%
+  group_by(macaddr) %>% 
+  arrange(`_time`)
+macs <- unique(dflap$macaddr)
+```
+
+### Calulate time difference between each event
+
+```{r timediff}
+timesBtwnAPs <- lapply(macs, function(mac) {
+  oneMac <- dflap %>% 
+    filter(macaddr == mac)
+  oneMac$endTime <- lead(oneMac$`_time`, 1)
+  oneMac <- oneMac %>% 
+    mutate(timeInte = difftime(endTime, `_time`, units = "secs"))
+  return(oneMac)
+})
+```
+
+### Creating dataframe with events identified as erroneous
+
+```{r createdf, results = "hide"}
+eligibleDF <- NULL
+allEventsDF <- NULL
+switchTime <- 60
+
+for(k in 1:length(timesBtwnAPs)) {
+  x <- timesBtwnAPs[[k]]
+  if(length(x$prefix) <= 1) {
+    allEventsDF <- rbind(allEventsDF, x)
+    next
+  }
+  # returns TRUE if there is a switch before a specified time has passed
+  x <- x %>%
+    mutate(lessThanMin = switchTime > timeInte)
+  
+  allEventsDF <- rbind(allEventsDF, x) # saving pre-cut df
+  
+  # returns a list of row numbers that have TRUE occurring more than once in a row 
+  rows <- sapply(1:(length(x$lessThanMin)-1), function(i) {
+    if(is.na(x$lessThanMin[[i]]) | is.na(x$lessThanMin[[i+1]])) { # end of df
+      return(NULL)
+    }
+    if(x$lessThanMin[[i]] == x$lessThanMin[[i+1]] & x$lessThanMin[[i]]) { 
+      return(i)
+    } else {
+      return(NULL)
+    }
+  })
+  
+  rows <- unlist(rows)
+  notInSeq <- diff(rows)
+  if(length(notInSeq) == 0) { # nothing is problematic
+    next
+  }
+  if(length(notInSeq[!duplicated(notInSeq)]) == 1) { # there is only one consecutive line of TRUE
+    rows <- c(rows, rows[length(rows)] + 1)
+  } else {
+    # the last row of TRUE gets cut off. this is adding it back in
+    sapply(1:length(notInSeq), function(j) { 
+      if(notInSeq[j] != 1) {
+        rows <- c(rows, rows[j] + 1) 
+      }
+    })
+  }
+  rows <- sort(rows)
+  x <- x[rows, ] # reduce df down to problematic rows
+  x$id <- rows # to keep consecutive switches clear
+  
+  eligibleDF <- rbind(eligibleDF, x) # saving erroneous events
+}
+```
+
+```{r viewall}
+knitr::kable(allEventsDF[1:6, ], format = "html")
+```
+
+### Taking out sequences that are less than 2 in length
+
+When investigating switches between APs, taking out sequences that are less than 2 in length allows for more accurate identifications because typically there will be an association followed by an authentication within a minute.
+
+```{r}
+thresh <- 2 
+sequ <- diff(eligibleDF$id) 
+prev <- sequ[[1]]
+count <- 1
+seqs <- sapply(2:length(sequ), function(i) {
+  ret <- NULL
+  if(1 == prev) {
+    count <<- count + 1
+  }
+  else {
+    if(count > thresh) {
+      ret <- i # to mark row beginning with a consecutive 
+    } else {
+      ret <- -1 # end of sequence that is less than 2 in length
+    }
+    count <<- 1
+  }
+  prev <<- sequ[[i]]
+  return(ret)
+})
+
+# to get the relevant indices of sequences that are > 2
+inds <- NULL
+iStart <- 1
+for(i in 2:length(seqs)) {
+  if(!is.null(seqs[[i]])) {
+    if(seqs[[i]] > 0) {
+      inds <<- c(inds, iStart:i)
+    }
+    iStart <<- i + 1
+  }
+}
+eligibleDFforAPs <- eligibleDF
+eligibleDFforAPs$error <- c("FALSE") # notice that it's a character
+eligibleDFforAPs$error[inds] <- "TRUE"
+```
+
+```{r vieweligible}
+knitr::kable(eligibleDFforAPs[1:6, ], format = "html")
+```
+
+### Finally,
+
+```{r}
+# seeing how many were tagged compared to original dataset
+bigMerge <- merge.data.frame(allEventsDF, eligibleDFforAPs, all.x = TRUE, all.y = FALSE) # supposed to be the same size as dflap. not sure why it's bigger. in fact, if you merge the same dataframe it also becomes bigger.
+bigMerge$error[is.na(bigMerge$error)] <- "FALSE"
+
+countAPs <- (eligibleDFforAPs %>% # to count uniqueness by counting the number of macs associated with the ap
+                   group_by(macaddr, ap) %>% 
+                   summarise(n = n()) %>% 
+                   arrange(desc(n))) %>%
+  group_by(ap) %>%
+  summarise(numMacs = n())
+erroneousAPs <- eligibleDFforAPs %>% # to count raw events
+  group_by(ap) %>% 
+  summarise(numEvents = n())
+erroneousAPs <- merge(countAPs, erroneousAPs) %>% # combining the two and making a ratio
+  mutate(macsbyevents = numMacs / numEvents,
+         eventsbymacs = numEvents / numMacs) %>%
+  arrange(desc(numMacs))
+head(erroneousAPs)
+```
+
+```{r}
+ggplot(eligibleDFforAPs, aes(x = `_time`, y= ap)) + # maybe a helpful visualization ? like if there was a time where everyone re-connected?
+  geom_point(aes(color = error)) +
+  labs(subtitle="Each dot represents a registered event for aps identified as erroneous")
+ggplot(bigMerge, aes(x = `_time`, y= ap)) + # for seeing if there is any pattern for errors vs non errors
+  geom_point(aes(color = error))
+```
+
+

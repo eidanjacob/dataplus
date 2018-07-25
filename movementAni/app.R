@@ -19,15 +19,15 @@ library(tweenr)
 # importing functions
 source("../functions.R")
 
-# # reading in data (project folder is working directory)
-# coord <- read_csv("../locationsToCoordinates.csv")
-# coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
-# validLocations <- read_csv("../allAPs.csv") # aps <-> locations
-# dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
-# 
-# numAPs <- validLocations %>% # number of APs per location
-#   group_by(location) %>%
-#   summarise(num = n())
+# reading in data (project folder is working directory)
+coord <- read_csv("../locationsToCoordinates.csv")
+coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
+validLocations <- read_csv("../allAPs.csv") # aps <-> locations
+dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE)
+
+numAPs <- validLocations %>% # number of APs per location
+  group_by(location) %>%
+  summarise(num = n())
 
 # splunkData <- read_csv("../eventData.csv")
 #
@@ -46,8 +46,8 @@ source("../functions.R")
 # df <- merge(df, validLocations, by = "ap") # this is the slow step
 # write.csv(df, "../mergedData.csv")
 
-# df <- read_csv("../mergedData.csv") # this is only commented out to save me time. when viewing this code, put it back in
-# df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
+df <- read_csv("../mergedData.csv") # this is only commented out to save me time. when viewing this code, put it back in
+df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
 # draw duke border
 p = Polygon(dukeShape)
@@ -183,7 +183,7 @@ ui <- fluidPage(
 # Define server logic 
 server <- function(input, output) {
   
-  # getting all the macaddrs that actually move -- things that don't move can be hardcore students or desktop computers
+  # Getting all the macaddrs that actually move -- things that don't move can be hardcore students or desktop computers
   # This can be useful if you want a really animated and cool looking gif. otherwise, comment it out for realism.
   # uniqMacs <- doesMove(macData)
   
@@ -195,10 +195,11 @@ server <- function(input, output) {
     geom_polygon(fill = "gray84") + coord_equal() + geom_path(color = "white")
   
   start.time = min(macData$time.window)
-    
+  observeEvent(input$submit, {  
+  
     output$plotGen <- renderImage({
       
-      req(input$submit)
+      
       
       isolate({
         tx <- paste("Submitted with num:", input$num)
@@ -234,9 +235,10 @@ server <- function(input, output) {
           
           mapGen <- polys + geom_point(data = mac_tween, aes(x = y, y = x, group = .group, frame = min), color = "blue", alpha = 0.2) + # overlaying points on polygons
             theme_bw() + xlab("Longitude") + ylab("Latitude")
+          
           incProgress(detail = "Points added to polys.")
           
-          gganimate(mapGen, filename = "outfile1.gif", title_frame = TRUE, interval = 0.10)
+          gg_animate(mapGen, filename = "outfile1.gif", title_frame = TRUE, interval = 0.10)
           incProgress(detail = "gganimate complete.")
           
           list(src = "outfile1.gif",
@@ -247,12 +249,16 @@ server <- function(input, output) {
           )
         })
       })
-    }, deleteFile = TRUE)
+      
+      }, deleteFile = TRUE)
+      
+    })
   
+  observeEvent(input$submit, {
   
     output$plotLoc <- renderImage({
       
-      req(input$submit)
+      
       
       isolate({
         tx <- paste("Submitted with num:", input$num)
@@ -301,7 +307,7 @@ server <- function(input, output) {
             theme_bw() + xlab("Longitude") + ylab("Latitude")
           incProgress(detail = "Points added to polys.")
           
-          gganimate(mapLoc, filename = "outfile2.gif", title_frame = TRUE, interval = 0.10)
+          gg_animate(mapLoc, filename = "outfile2.gif", title_frame = TRUE, interval = 0.10)
           incProgress(detail = "gganimate complete.")
           
           list(src = "outfile2.gif",
@@ -312,6 +318,8 @@ server <- function(input, output) {
           )
         }) })
     }, deleteFile = TRUE)
+      
+    })
   
 }
 
