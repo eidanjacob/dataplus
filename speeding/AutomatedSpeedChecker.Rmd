@@ -78,28 +78,28 @@ for(f in files){
     }
   }
 }
-# # calculating voronoi cells and converting to polygons to plot on map
-# z <- deldir(coord$long, coord$lat) # computes cells
-# # convert cell info to spatial data frame (polygons)
-# w <- tile.list(z)
-# polys <- vector(mode="list", length=length(w))
-# for (i in seq(along=polys)) {
-#   pcrds <- cbind(w[[i]]$x, w[[i]]$y)
-#   pcrds <- rbind(pcrds, pcrds[1,])
-#   polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
-# }
-# SP <- SpatialPolygons(polys)
-# for(x in 1:nrow(coord)){
-#   SP@polygons[[x]]@ID <- as.character(x)
-# }
-# SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
-# # tag polygons with location name
-# SPDF@data$ID = coord$location
-# a <- sapply(1:length(coord$location), function(x){
-#   SPDF@polygons[[x]]@ID <- coord$location[x]
-#   SPDF <<- SPDF
-# })
-# adjTable <- gTouches(SPDF, byid = TRUE)
+# calculating voronoi cells and converting to polygons to plot on map
+z <- deldir(coord$long, coord$lat) # computes cells
+# convert cell info to spatial data frame (polygons)
+w <- tile.list(z)
+polys <- vector(mode="list", length=length(w))
+for (i in seq(along=polys)) {
+  pcrds <- cbind(w[[i]]$x, w[[i]]$y)
+  pcrds <- rbind(pcrds, pcrds[1,])
+  polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
+}
+SP <- SpatialPolygons(polys)
+for(x in 1:nrow(coord)){
+  SP@polygons[[x]]@ID <- as.character(x)
+}
+SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
+# tag polygons with location name
+SPDF@data$ID = coord$location
+a <- sapply(1:length(coord$location), function(x){
+  SPDF@polygons[[x]]@ID <- coord$location[x]
+  SPDF <<- SPDF
+})
+adjTable <- gTouches(SPDF, byid = TRUE)
 ```
 
 Distance table:
