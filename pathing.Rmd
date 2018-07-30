@@ -5,6 +5,8 @@ date: "July 23, 2018"
 output: html_document
 ---
 
+This file differs from singleFileFromTo in that it's less interactive, but it is able to display more data in the form of tables. In addition, rather than just displaying location to location information, it also shows ap to ap information.
+
 The goal is to find areas of underutilization by finding which paths are most common. Essentially, if there are many paths that start from location A and end in location B but don't go through the locations between A and B or, in the case that A and B are connected, if it goes around A and B instead of to A and B directly.
 
 ```{r setup, message = FALSE, warning = FALSE}
@@ -107,6 +109,76 @@ findIndex <- function(macdf, fromLoc, toLoc,
 }
 ```
 
+## Creating function findPaths
+
+This function takes in the same parameters as findIndex, but instead it calls findIndex and returns three things.
+1. The original return of findIndex - for debugging purposes.
+2. The most popular complete paths.
+3. The most popular, single location to location paths.
+This is useful when one wants to visualize several different paths from different locations.
+The dataframe, macdf, has 19 parameters.
+prefix, ap, _time, asa_code, macaddr, slotnum, ssid, ipaddr, location.x, fromLoc, lat, long, campus, APname, APnum, org, toLoc, nextTime, timeDiff
+fromLoc - location.y from mergedData
+toLoc - next location visited by that macaddr
+nextTime - the time of the next event registered by that macaddr
+timeDiff - nextTime minus _time
+
+```{r}
+findPaths <- function(macdf, fromLoc, toLoc, 
+                      fromInte = 60 * 5, toInte = 60 * 5, 
+                      betweenInte = 60 * 10, distInte = 2) {
+  findI <- findIndex(macdf, fromLoc, toLoc, 
+                      fromInte, toInte, 
+                      betweenInte, distInte)
+  dfLocs <- findI$orig
+  
+  # Condensing for better pathing
+  paths <- dfLocs %>% 
+    group_by(macaddr) %>% 
+    mutate(id = rleid(fromLoc))
+  paths <- paths %>% # summing up the amount of time spent at a location
+    group_by(macaddr, id, fromLoc) %>% 
+    summarise(totalTime = sum(timeDiff)) 
+  paths <- paths %>% 
+    group_by(macaddr) %>% 
+    mutate(toLoc = lead(fromLoc, order_by = macaddr))
+  
+  # Most common A -> B paths, that is, the full path rather than just the most popular destinations
+  # E.g. shows A to C to D to B rather than
+  # A to C, then C to D, then D to B, the latter of which is a "location to location" path
+  macs <- unique(paths$macaddr)
+  fullPaths <- list(path = NULL, count = NULL)
+  # Count the frequencies of certain paths
+  delete <- sapply(macs, function(mac) { # assigning to variable to suppress output
+    
+    macLoc <- paths %>%
+      filter(macaddr == mac)
+    path <- toString(paste0(macLoc$fromLoc))
+    if(!path %in% fullPaths$path) { # path is not in paths list
+      fullPaths$path <<- c(fullPaths$path, path) # add to list and initialize count
+      fullPaths$count <<- c(fullPaths$count, 0)
+    }
+    index <- match(path, fullPaths$path)
+    fullPaths$count[index] <<- fullPaths$count[index] + 1 # increment by one
+    })
+  
+  fullPaths <- as.data.frame(fullPaths)
+  fullPaths <- fullPaths %>%   
+    arrange(desc(count))
+  
+  # Most common location to location paths
+  paths <- paths %>% 
+    group_by(fromLoc, toLoc) %>% 
+    summarise(freq = n()) %>% 
+    arrange(desc(freq))
+  paths <- paths[!is.na(paths$toLoc), ]
+  
+  ret <- list(orig = findI, allPaths = fullPaths, subPaths = paths)
+  
+  return(ret)
+}
+```
+
 ## Creating the adjacency table
 
 This is a table that shows which polygons are adjacent to each other. This is useful for comparing whether macs tend to go from adj polygon to adj polygon or they tend to skip neighboring polygons.
@@ -163,7 +235,15 @@ dfphones <- dfphones %>% # for location to location
          nextTime = lead(`_time`, order_by = macaddr),
          timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>% 
   rename(fromLoc = location.y) 
-dfall <- dfall %>% # for most common paths
+dfallap <- dfall %>% # for most common paths between aps
+  group_by(macaddr) %>% 
+  mutate(toAP = lead(ap, order_by = macaddr),
+         toLoc = lead(location.y, order_by = macaddr),
+         nextTime = lead(`_time`, order_by = macaddr),
+         timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>% 
+  rename(fromAP = ap,
+         fromLoc = location.y) 
+dfallloc <- dfall %>% # for most common paths between locations
   group_by(macaddr) %>% 
   mutate(toLoc = lead(location.y, order_by = macaddr),
          nextTime = lead(`_time`, order_by = macaddr),
@@ -171,103 +251,130 @@ dfall <- dfall %>% # for most common paths
   rename(fromLoc = location.y) 
 
 # For general pathing purposes
-dfGen <- dfall %>% 
+dfGenLoc <- dfallloc %>% 
   dplyr::select(`_time`, nextTime, fromLoc, toLoc, macaddr, timeDiff)
-dfGen <- dfGen[which(dfGen$fromLoc != dfGen$toLoc), ] # getting rid of A -> A
+dfGenLoc <- dfGenLoc[which(dfGenLoc$fromLoc != dfGenLoc$toLoc), ] # getting rid of A -> A
+dfGenAP <- dfallap[which(dfallap$fromAP != dfallap$toAP), ]
 ```
 
 ## Finding paths
 
+### Filtering for phones
+
 This is finding paths by figuring out how a macaddr moves throughout the day.
 
-```{r pathing, message = FALSE}
+```{r phones, message = FALSE, warning = FALSE, results = "asis"}
 # For location to location pathing
 # Parameters
-fl <- "Perkins"
-tl <- "WestUnion"
-fromInte <- 60 * 5
-toInte <- 60 * 5
-betweenInte <- 60 * 5
-distInte <- 1
+fl <- c("Kilgo", "Keohane", "Perkins")
+tl <- c("Perkins", "Perkins", "WestUnion")
+fromInte <- c(60 * 5, 60 * 5, 60 * 5)
+toInte <- c(60 * 5, 60 * 5, 60 * 5)
+betweenInte <- c(60 * 5, 60 * 5, 60 * 5)
+distInte <- c(1, 1, 1)
 
-# Filter for macs that have visited both locations to speed up runtimes
-fromMacs <- unique((dfphones %>%
-  filter(fromLoc == fl))$macaddr)
-toMacs <- unique((dfphones %>%
-  filter(fromLoc == tl))$macaddr)
-bothMacs <- intersect(fromMacs, toMacs)
-dfphones <- dfphones %>% 
-  filter(macaddr %in% bothMacs)
+fullPaths <- vector("list", length(fl))
+subPaths <- vector("list", length(fl))
 
-# Finding viable paths
-temp <- findIndex(dfphones, fl, tl, 
-                    fromInte, toInte, betweenInte, distInte)
-dfLocs <- temp$orig
-
-# Condensing for better pathing
-paths <- dfLocs %>% 
-  group_by(macaddr) %>% 
-  mutate(id = rleid(fromLoc))
-paths <- paths %>% # summing up the amount of time spent at a location
-  group_by(macaddr, id, fromLoc) %>% 
-  summarise(totalTime = sum(timeDiff)) 
-paths <- paths %>% 
-  group_by(macaddr) %>% 
-  mutate(toLoc = lead(fromLoc, order_by = macaddr))
-
-# Most common A -> B paths, that is, the full path rather than just the most popular destinations
-# E.g. shows A to C to D to B rather than
-# A to C, then C to D, then D to B, the latter of which is a "location to location" path
-macs <- unique(paths$macaddr)
-fullPaths <- list(path = NULL, count = NULL)
-# Count the frequencies of certain paths
-delete <- sapply(macs, function(mac) { # assigning to variable to suppress output
-  macLoc <- paths %>%
-    filter(macaddr == mac)
-  path <- toString(paste0(macLoc$fromLoc))
-  if(!path %in% fullPaths$path) { # path is not in paths list
-    fullPaths$path <<- c(fullPaths$path, path) # add to list and initialize count
-    fullPaths$count <<- c(fullPaths$count, 0)
-  }
-  index <- match(path, fullPaths$path)
-  fullPaths$count[index] <<- fullPaths$count[index] + 1 # increment by one
-})
-fullPaths <- as.data.frame(fullPaths)
-fullPaths <- fullPaths %>%   
-  arrange(desc(count))
-head(fullPaths)
-
-# Most common location to location paths
-paths <- paths %>% 
-  group_by(fromLoc, toLoc) %>% 
-  summarise(freq = n()) %>% 
-  arrange(desc(freq))
-paths <- paths[!is.na(paths$toLoc), ]
+for(i in 1:length(fl)) {
+  # Filter for macs that have visited both locations to speed up runtimes
+  bothMacs <- unique((dfphones %>%
+                        filter(fromLoc %in% c(fl[i],tl[i])))$macaddr)
+  dfphones <- dfphones %>% 
+    filter(macaddr %in% bothMacs)
   
-head(paths)
+  # Finding viable paths
+  temp <- findPaths(dfphones, fl[i], tl[i],
+                    fromInte[i], toInte[i], betweenInte[i], distInte[i])
+  paths <- temp$subPaths
+  
+  # Saving dataframes
+  fullPaths[[i]] <- temp$allPaths
+  subPaths[[i]] <- paths
+  
+  # Note that the paths may seem weird because of the particular orgs chosen to be represented.
+  print(knitr::kable(temp$allPaths, format = "html"))
+  
+  print(knitr::kable(paths, format = "html"))
+  
+  # Viewing graph
+  coordTrun <- coord %>% # getting rid of vertices that don't appear on graph
+    filter(location %in% c(paths$fromLoc, paths$toLoc))
+  coordMx <- as.matrix(coordTrun[, 3:2]) # placing vertices on geographic location
+  g <- graph.data.frame(paths, directed = TRUE, vertices = coordTrun)
+  E(g)$width <- sqrt(paths$freq) # wider == more frequent; sqrt size for easy viewings
+  plot(g, 
+       layout = coordMx, 
+       edge.arrow.size = 0.15, 
+       vertex.size = 1, 
+       vertex.label.dist = 1, 
+       vertex.color = "darkblue", 
+       edge.color = "violet",
+       vertex.label.cex = 0.75, 
+       vertex.label.family = "Helvetica",
+       vertex.label.font = 2, 
+       main = paste("From", fl[i], "to", tl[i])) 
+}
 ```
 
-## Graph
+### Without filtering for phones
 
-```{r graph}
-coordTrun <- coord %>% # getting rid of vertices that don't appear on graph
-  filter(location %in% c(paths$fromLoc, paths$toLoc))
-coordMx <- as.matrix(coordTrun[, 2:3]) # placing vertices on geographic location
-g <- graph.data.frame(paths, directed = TRUE, vertices = coordTrun)
-E(g)$width <- paths$freq # wider == more frequent
-plot(g, 
-     layout = coordMx, 
-     edge.arrow.size = 0.5, 
-     vertex.size = 4, 
-     vertex.label.dist = 1, 
-     vertex.color = "blue", 
-     edge.color = "red")
+```{r nophones, message = FALSE, warning = FALSE, results = "asis"}
+# For location to location pathing
+# Parameters
+fl <- c("Kilgo", "Keohane", "Perkins")
+tl <- c("Perkins", "Perkins", "WestUnion")
+fromInte <- c(60 * 5, 60 * 5, 60 * 5)
+toInte <- c(60 * 5, 60 * 5, 60 * 5)
+betweenInte <- c(60 * 5, 60 * 5, 60 * 5)
+distInte <- c(1, 1, 1)
+
+temp <- NULL
+
+for(i in 1:length(fl)) {
+  # Filter for macs that have visited both locations to speed up runtimes
+  bothMacs <- unique((dfallloc %>%
+                        filter(fromLoc %in% c(fl[i],tl[i])))$macaddr)
+  bothMacs <- sample(bothMacs, min(500, length(bothMacs))) # sampling only a portion
+  dfallFilt <- dfallloc %>% 
+    filter(macaddr %in% bothMacs)
+  
+  # Finding viable paths
+  temp <- findPaths(dfallFilt, fl[i], tl[i],
+                    fromInte[i], toInte[i], betweenInte[i], distInte[i])
+  paths <- temp$subPaths
+  
+  # Note that the paths may seem weird because of the particular orgs chosen to be represented.
+  print(knitr::kable(temp$allPaths, format = "html"))
+  
+  print(knitr::kable(paths, format = "html"))
+  
+  # Viewing graph
+  coordTrun <- coord %>% # getting rid of vertices that don't appear on graph
+    filter(location %in% c(paths$fromLoc, paths$toLoc))
+  coordMx <- as.matrix(coordTrun[, 3:2]) # placing vertices on geographic location
+  g <- graph.data.frame(paths, directed = TRUE, vertices = coordTrun)
+  E(g)$width <- sqrt(paths$freq) # wider == more frequent; sqrt size for easy viewings
+  plot(g, 
+       layout = coordMx, 
+       edge.arrow.size = 0.15, 
+       vertex.size = 1, 
+       vertex.label.dist = 1, 
+       vertex.color = "darkblue", 
+       edge.color = "violet",
+       vertex.label.cex = 0.75, 
+       vertex.label.family = "Helvetica",
+       vertex.label.font = 2, 
+       main = paste("From", fl[i], "to", tl[i])) 
+}
 ```
 
 ## Viewing the most popular paths in general
 
-```{r}
-dfGenTrun <- dfGen %>% 
+### By location
+
+```{r genpaths}
+dfGenTrun <- dfGenLoc %>% 
        group_by(fromLoc, toLoc) %>% 
        summarise(freq = n()) %>% 
        arrange(desc(freq))
@@ -284,23 +391,108 @@ dfGenTrun <- dfGen %>%
 dfGenTrun <- dfGenTrun %>% 
   arrange(desc(freq))
 
-dfGenTrun[1:20, ]
+knitr::kable(dfGenTrun[1:20, ], format = "html")
+```
+
+### By AP
+
+```{r}
+dfGenAPTrun <- dfGenAP %>% 
+  group_by(fromAP, toAP, fromLoc, toLoc) %>%
+  summarise(freq = n()) %>% 
+  arrange(desc(freq))
+
+knitr::kable(dfGenAPTrun[1:20, ], format = "html")
 ```
 
 ## Observing paths that aren't adjacent
 
 This could be an indication that more aps are needed, people move too fast to be caught by aps, the polygons drawn aren't representative, etc.
 
-```{r}
-notAdj <- NULL
-for(i in 1:length(dfGenTrun$fromLoc)) {
+### By location
+
+```{r notadjloc}
+notAdjLoc <- NULL
+delete <- NULL
+delete <- sapply(1:length(dfGenTrun$fromLoc), function(i){
   from <- as.character(dfGenTrun$fromLoc[i])
   to <- as.character(dfGenTrun$toLoc[i])
   if(!adjTable[from, to]) { # if A and B aren't adjacent
-    notAdj <- rbind(notAdj, dfGenTrun[i, ]) # add to dataframe for further analysis
+    notAdjLoc <<- rbind(notAdjLoc, dfGenTrun[i, ]) # add to dataframe for further analysis
+  }
+})
+
+knitr::kable(notAdjLoc[1:20, ], format = "html")
+```
+
+### By AP
+
+```{r notadjap}
+notAdjAP <- NULL
+delete <- NULL
+delete <- sapply(1:200, function(i){ # 1:length(dfGenAPTrun$fromLoc) ; using 100 to speed stuff up
+  from <- as.character(dfGenAPTrun$fromLoc[i])
+  to <- as.character(dfGenAPTrun$toLoc[i])
+  if(!adjTable[from, to] & from != to) { # if A and B aren't adjacent
+    notAdjAP <<- rbind(notAdjAP, dfGenAPTrun[i, ]) # add to dataframe for further analysis
+  }
+})
+
+knitr::kable(notAdjAP[1:20, ], format = "html")
+```
+
+## Observing different location AP to AP jumps
+
+By conducting this analysis we are hoping to discover if the data/calculations accurately reflect which buildings are physically next to each other as well as APs that could interfere with each others' signals. In addition, this is also a rudimentary way of finding out where the APs are, physically -- in this case, these APs are presumably near the exterior of buildings.
+
+```{r}
+locJumps <- dfGenAP[which(dfGenAP$fromLoc != dfGenAP$toLoc), ] # jumps where locations are different
+
+locJumps <- locJumps %>% 
+  group_by(fromAP, toAP, fromLoc, toLoc) %>%
+  summarise(freq = n()) %>% 
+  arrange(desc(freq))
+
+knitr::kable(locJumps[1:20, ], format = "html")
+```
+
+## AP to AP pathing by unique occurences per mac
+
+Only AP to AP pathing is further calculated by unique occurences per mac because one macaddr constantly switching between two APs can cause a unrepresentative number of events for those two APs while with location, it is less likely. 
+Further observing locations by unique occurrences can possibly reveal discreptancies caused by problematic APs that are near the outside of the building.
+
+```{r}
+# Overall pathing
+popPathAPUniqMac <- dfGenAP %>% 
+  group_by(macaddr, fromAP, toAP, fromLoc, toLoc) %>% 
+  summarise(freq = n()) %>% # first group by mac to condense from to info
+  group_by(fromAP, toAP, fromLoc, toLoc) %>% 
+  summarise(freq = n()) %>% # then group by from, to so that each mac's from to has a weight of 1
+  arrange(desc(freq))
+  
+knitr::kable(popPathAPUniqMac[1:20, ], format = "html")
+
+# Nonadjacent pathing
+notAdjAP <- NULL
+for(i in 1:200) { # 1:length(popPathAPUniqMac$fromLoc)
+  from <- as.character(popPathAPUniqMac$fromLoc[i])
+  to <- as.character(popPathAPUniqMac$toLoc[i])
+  if(!adjTable[from, to] & from != to) { # if A and B aren't adjacent
+    notAdjAP <- rbind(notAdjAP, popPathAPUniqMac[i, ]) # add to dataframe for further analysis
   }
 }
 
-notAdj[1:20, ]
+knitr::kable(notAdjAP[1:20, ], format = "html")
+
+# Different location jumps
+locJumps <- popPathAPUniqMac[which(popPathAPUniqMac$fromLoc != popPathAPUniqMac$toLoc), ] # jumps where locations are different
+
+locJumps <- locJumps %>%
+  group_by(fromAP, toAP, fromLoc, toLoc) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq))
+
+knitr::kable(locJumps[1:20, ], format = "html")
 ```
 
+Future work could look at the frequency discrepancies between A -> B and B -> A.

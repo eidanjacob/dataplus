@@ -1,5 +1,5 @@
-library(dplyr)
-library(lubridate)
+library(dplyr) # for processing data frames
+library(lubridate) # for time conversion / subtraction
 library(data.table) # for rleid
 
 # Script that calculates how long a macaddr stayed in each place it visited
