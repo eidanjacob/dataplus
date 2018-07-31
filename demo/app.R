@@ -19,6 +19,7 @@ library(tidyr)
 library(RColorBrewer)
 library(maps)
 library(tweenr)
+library(mapview)
 
 # For Campus Maps
 # ###################
@@ -103,8 +104,8 @@ sapply(1:length(coord$location), function(x){
 })
 
 # Default coordinates that provide overview of entire campus
-defLong <- -78.9272544 # default longitude
-defLati <- 36.0042458 # default latitude
+defLong <- -78.932525 # default longitude
+defLati <- 36.002145 # default latitude
 zm <- 15 # default zoom level
 
 # Coordinates for West
@@ -253,6 +254,21 @@ dfssidlocs <- df %>% # seeing if ssid events change by locations
 dfVO <- dfssidlocs %>% # seeing if ssid events change by off campus locations
   filter(campus == "Off")
 
+# For top 5 APs by location
+dfap <- df %>% # seeing top events by location by ap
+  group_by(ap, location.y, campus) %>%
+  summarise(n = n())
+dfaptrun <- dfap %>%
+  group_by(location.y) %>%
+  top_n(n=5, wt = n)
+locs <- dfaptrun %>% 
+  group_by(location.y) %>% 
+  summarise(n = n())
+locs <- locs[locs$n == 5, ]
+dfaptrun <- dfaptrun[dfaptrun$location.y %in% locs$location.y, ] # getting rid of locations that don't have at least 5 aps
+dfaptrun <- dfaptrun[order(dfaptrun$n,dfaptrun$location.y),]
+dfaptrun$ap <- factor(dfaptrun$ap, levels = dfaptrun$ap[order(dfaptrun$n)]) # reordering factors for nicer looking graph
+
 # For slotnum usage by campus
 dfapslots <- df %>% 
   group_by(ap, slotnum, campus, location.y) %>% 
@@ -293,7 +309,7 @@ ui <- fluidPage(
   
   navbarPage("Data+ Map Demo",
              tabPanel("Public Campus Map",
-                      leafletOutput("pubmap", height = 850)
+                      imageOutput("pubmap")
              ),
              tabPanel("Internal Campus Map",
                       
@@ -320,7 +336,7 @@ ui <- fluidPage(
                             textInput("mac", "Track", value = "00:b3:62:16:56:05"),
                             actionButton("submitMac", "Submit"),
                             p(),
-                            textOutput("canTrack")
+                            htmlOutput("canTrack")
                           )
                         ),
                         
@@ -373,11 +389,12 @@ ui <- fluidPage(
                       )
              ),
              tabPanel("Plots",
-                      plotOutput("ssidcampus"),
-                      plotOutput("ssidofflocs"),
-                      plotOutput("bluevisit"),
-                      plotOutput("slotnumcampus"),
-                      plotOutput("slotnumcampusdorms"))
+                      plotOutput("ssidcampus", height = 800),
+                      plotOutput("ssidofflocs", height = 800),
+                      plotOutput("bluevisit", height = 800),
+                      plotOutput("slotnumcampus", height = 800),
+                      plotOutput("slotnumcampusdorms", height = 800),
+                      plotOutput("topap", width = 3956, height = 2100))
   )
   
 )
@@ -387,6 +404,7 @@ server <- function(input, output) {
   
   # For Public Campus Map
   ##################
+  output$pubmap <- renderImage({
   # This filtering here does not exist in actual public map. It is just here to save runtime.
   populationDensities <- popDensityList[[1]]
   thisStep <- populationDensities %>%
@@ -395,15 +413,18 @@ server <- function(input, output) {
   myPaletteList <- paletteList[[1]]
   myPalette <- myPaletteList[[1]]
   
+  # A temp file to save output
+  outfile <- tempfile(fileext = ".png")
+  
   # Getting the marker color depending on its population density
   getColor <- function(step) {
     sapply(step$info, function(val) {
-      if(val < mean(step$info)) {
+      if(val < summary(step$info)[[2]]) {
         "green"
-      } else if(val > mean(step$info)) {
+      } else if(val > summary(step$info)[[5]]) {
         "red" 
       } else {
-        "yellow"
+        "orange"
       } 
     })
   }
@@ -430,10 +451,15 @@ server <- function(input, output) {
                       icon = icons,
                       options = markerOptions())
   
-  # Drawing map
-  output$pubmap <- renderLeaflet({ 
-    m
-  })
+  # Save to temp file
+  mapshot(m, file = outfile)
+  
+  list(src = outfile,
+       contentType = 'image/png',
+       width = 850,
+       height = 637)
+  
+  }, deleteFile = TRUE)
   ##################
   
   # For Internal Campus Map
@@ -481,9 +507,10 @@ server <- function(input, output) {
   observeEvent(input$submitMac, { # changing which macaddr to track
     include$singleMac <- input$mac 
     if(include$singleMac %in% currMacs$macaddr) {
-      txt <- paste0(unique(currMacs %>% 
-                             filter(macaddr == include$singleMac))$time.window, collapse = "\n")
-      output$canTrack <- renderPrint(cat(txt))
+      output$canTrack <- renderUI({
+        HTML(paste0(unique((currMacs %>% 
+                              filter(macaddr == include$singleMac))$time.window), sep = '<br/>'))
+      })
     } else {
       output$canTrack <- renderText("Macaddr not found. Note that macaddr must be lowercase.")
     }
@@ -1050,7 +1077,7 @@ server <- function(input, output) {
                                         subtitle = "Higher ratio implies more Dukeblue events than DukeVisitor"))
   output$slotnumcampus <- renderPlot(ggplot(data = dfapslotsno2, aes(x=n.x, y= n.y)) + 
                                        geom_point(aes(color = campus.x)) + 
-                                       labs(x="Num of Slot 0 Events", y= "Num of Slot 1 Events") + 
+                                       labs(x="Num of Slot 0 Events", y= "Num of Slot 1 Events", title = "Comparing Slot 0 and Slot 1 Events by Campus") + 
                                        coord_fixed() + 
                                        facet_wrap(.~campus.x) + 
                                        theme_bw())
@@ -1059,6 +1086,13 @@ server <- function(input, output) {
                                             coord_fixed() + 
                                             facet_wrap(.~as.character(isDorm)) + 
                                             theme_bw())
+  output$topap <- renderPlot(ggplot(dfaptrun, aes(x=ap,y=n)) + 
+                               geom_col(aes(fill=location.y)) + 
+                               labs(title = "Top 5 Events of Each Location by AP", y = "Num of Events") +
+                               theme_bw() + 
+                               coord_flip() + 
+                               facet_wrap(.~location.y, scales = "free") + # notice differing scales
+                               theme(legend.position = "bottom"))
   ##################
   
 }

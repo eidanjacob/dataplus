@@ -39,21 +39,21 @@ numAPs <- validLocations %>% # number of APs per location
   summarise(num = n())
 
 # splunkData <- read_csv("../eventData.csv")
-# 
+#
 # # match aps to locations, merge for coordinates
 # df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
-# 
+#
 # # Some aps are in splunk data with name, some with number - code below matches location using whichever is available
 # nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
 # numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
 # validLocations$ap = c(NA) # new "flexible" column to store either name or number
 # validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
 # validLocations$ap[numMatch] = validLocations$APnum[numMatch]
-# 
+#
 # validLocations <- merge(coord, validLocations) # link coordinates to locations
 # # use the new "flexible" ap variable to merge coordinates onto df
 # df <- merge(df, validLocations, by = "ap") # this is the slow step
-# 
+#
 # # merge with OUI table to identify manufacturers
 # df$prefix <- sapply(df$macaddr, function(mac){
 #   str <- substr(mac, 1, 8)
@@ -169,24 +169,24 @@ for(i in 1:length(timeSteps)){
   time.windowStart = start.time # time.window for selection
   populationDensities <- NULL
   macsToLoc <- NULL
-  
+
   while(end.time > time.windowStart){
-    
+
     # Filter for time interval
     selInt = interval(time.windowStart, time.windowStart + timeStep)
     thisStep <- df %>%
       filter(`_time` %within% selInt)
-    
+
     # Calculate Population Densities
     locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0))
     # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
     locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(thisStep$macaddr[thisStep$`location.y` == x]))})
-    
+
     # Calculate a measure of people / (100 sq meters)
     densities_area  <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
     densities_aps   <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / coord$num[x]})
     densities_both  <- sapply(1:N, function(x) {locationBinnedPop$pop[x] / SPDF@polygons[[x]]@area / areaConvert / coord$num[x]})
-    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop) 
+    info <- c(densities_area, densities_aps, densities_both, locationBinnedPop$pop)
     type <- c(rep(1, N), rep(2, N), rep(3, N), rep(4, N))
     densitiesToSave <- data.frame("location" = locationBinnedPop$location,
                                   #"pop" = locationBinnedPop$pop,
@@ -195,7 +195,7 @@ for(i in 1:length(timeSteps)){
                                   "type" = type,
                                   "time.window" = c(time.windowStart))
     populationDensities <- rbind(populationDensities, densitiesToSave)
-    
+
     # For each macaddr, keep track of where it currently is
     macs <- data.frame("macaddr" = thisStep$macaddr,
                        "location" = thisStep$location.y,
@@ -206,11 +206,11 @@ for(i in 1:length(timeSteps)){
                        "realTime" = c(thisStep$`_time`))
     macs <- macs[order(macs$realTime), ]
     macsToLoc <- rbind(macsToLoc, macs)
-    
+
     end.times[i] <- time.windowStart
     time.windowStart = time.windowStart + timeStep
   }
-  
+
   # setting up for chloropleth
   palette_area <- colorNumeric(colorPal, (populationDensities %>% filter(type == 1))$info)
   palette_aps  <- colorNumeric(colorPal, (populationDensities %>% filter(type == 2))$info)
@@ -220,10 +220,10 @@ for(i in 1:length(timeSteps)){
   palette_aps_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 2))$info+1))
   palette_both_log <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 3))$info+1))
   palette_raw_log  <- colorNumeric(colorPal, log((populationDensities %>% filter(type == 4))$info+1))
-  
+
   thisStepPaletteList <- list(palette_area, palette_aps, palette_both, palette_raw,
                               palette_area_log, palette_aps_log, palette_both_log, palette_raw_log)
-  
+
   # Cache these guys away for later
   popDensityList[[i]] <- populationDensities
   paletteList[[i]] <- thisStepPaletteList
@@ -261,7 +261,7 @@ ui <- fluidPage(
         textInput("mac", "Track", value = "00:b3:62:16:56:05"),
         actionButton("submitMac", "Submit"),
         p(),
-        textOutput("canTrack")
+        htmlOutput("canTrack")
       )
     ),
     
@@ -320,9 +320,10 @@ server <- function(input, output, session) {
   observeEvent(input$submitMac, { # changing which macaddr to track
     include$singleMac <- input$mac 
     if(include$singleMac %in% currMacs$macaddr) {
-      txt <- paste0(unique(currMacs %>% 
-                             filter(macaddr == include$singleMac))$time.window, collapse = "\n")
-      output$canTrack <- renderPrint(cat(txt))
+      output$canTrack <- renderUI({
+       HTML(paste0(unique((currMacs %>% 
+                             filter(macaddr == include$singleMac))$time.window), sep = '<br/>'))
+      })
     } else {
       output$canTrack <- renderText("Macaddr not found. Note that macaddr must be lowercase.")
     }

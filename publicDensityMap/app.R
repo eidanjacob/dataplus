@@ -10,21 +10,19 @@ library(sp) # for drawing polygons
 library(rgdal) # for drawing polygons
 library(lubridate) # for easy handling of times and dates
 library(geosphere) # for haversine formula (calculate distance on sphere)
+library(raster) # for constructing polygons  
+library(mapview) # for saving leaflet map
 
 # reading in data (project folder is working directory)
-coord <- read_csv("../locationsToCoordinates.csv") # locations to coordinates look up table
+coord <- read_csv("locationsToCoordinates.csv") # locations to coordinates look up table
 coord <- coord[order(coord$location),] # alphabetize location - coordinate dictionary
-dukeShape <- read_csv("../dukeShape.txt", col_names = FALSE) # shape of duke's campus
+dukeShape <- read_csv("dukeShape.txt", col_names = FALSE) # shape of duke's campus
 
-# reading in event data from directory
-df <- NULL
-directory <- "../data" # name of directory with data
-files <- list.files(directory, full.names = TRUE)
-lapply(files, function(fname) {
-  df <<- rbind(df, read_csv(paste0(fname)))
-})
+# List of buildings with floor info
+buildings <- list.files("./Buildings")
+buildingsNamesList <- NULL # vector of names of already calculated maps
+buildingsList <- NULL # list of plots
 
-df$`_time` <- force_tz(ymd_hms(df$`_time`), "EST")
 
 # draw duke border
 p = Polygon(dukeShape)
@@ -52,17 +50,17 @@ SP <- intersect(SP, sps)
 for(x in 1:nrow(coord)){
   SP@polygons[[x]]@ID <- as.character(x)
 }
-SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
+SPeventData <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
 # tag polygons with location name
-SPDF@data$ID = coord$location
+SPeventData@data$ID = coord$location
 sapply(1:length(coord$location), function(x){
-  SPDF@polygons[[x]]@ID <- coord$location[x]
-  SPDF <<- SPDF
+  SPeventData@polygons[[x]]@ID <- coord$location[x]
+  SPeventData <<- SPeventData
 })
 
 # Default coordinates that provide overview of entire campus
-defLong <- -78.9272544 # default longitude
-defLati <- 36.0042458 # default latitude
+defLong <- -78.932525 # default longitude
+defLati <- 36.002145 # default latitude
 zm <- 15 # default zoom level
 
 # Areas of polygons were calculated in original units (degrees). The code below approximates a sq. meter measure to a square degree (In Durham)
@@ -74,69 +72,131 @@ p3 <- c(defLong, defLati + 10 ^ degScale)
 areaConvert = distHaversine(p1, p2) * distHaversine(p1, p3) # = square meters per 10^degScale square degrees (in Durham)
 areaConvert = areaConvert / 10^(2 * degScale) # square meters per square degree
 
-# Calculate population density 
-end.time = (max(df$`_time`))
-
-# Color palette for polygons
-colorPal <- "Purples"
-
-# Calculate population densities
-locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0), "dens" = c(0))
-# For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
-locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(df$macaddr[df$`location.y` == x]))})
-densities_area  <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPDF@polygons[[x]]@area * areaConvert)})
-locationBinnedPop$dens <- densities_area
-
-# Setting up palette for choropleth
-palette_area <- colorNumeric(colorPal, locationBinnedPop$dens)
-
 # App User Interface
 ui <- fluidPage(
-  leafletOutput("map", height = 850)
+  navbarPage("WiFi Map", id = "tabs",
+             tabPanel("General Map", 
+                      leafletOutput("map", height = 850)
+             ),
+             tabPanel("Building Map", 
+                      plotOutput("build"),
+                      actionButton("back", "Back")
+             )
+  )
 )
 
 # App Server
 server <- function(input, output, session) {
   
-  # Getting the marker color depending on its population density
-  getColor <- function(step) {
-    sapply(step$dens, function(val) {
-      if(val < mean(step$dens)) {
-        "green"
-      } else if(val > mean(step$dens)) {
-        "red" 
-      } else {
-        "yellow"
-      } 
-    })
-  }
-  # Icon image
-  icons <- awesomeIcons(
-    icon = 'wifi',
-    iconColor = 'black',
-    library = 'fa',
-    markerColor = getColor(locationBinnedPop)
-  )
-  
-  # Creating map
-  m <- leaflet() %>%
-    setView("map", lng = defLong, lat = defLati, zoom = zm) %>% # sets initial map zoom & center
-    addProviderTiles(providers$OpenStreetMap.BlackAndWhite) %>% 
-    addPolygons(data = SPDF, 
-                layerId = locationBinnedPop$location,
-                weight = 1,
-                color = "black",
-                fillOpacity = 0.5,
-                fillColor = ~palette_area(densities_area)) %>% 
-    addAwesomeMarkers(lng = coord$long, 
-                      lat = coord$lat, 
-                      icon = icons,
-                      options = markerOptions())
+  hideTab("tabs", "Building Map")
   
   # Drawing map
   output$map <- renderLeaflet({ 
-    m
+    
+    # Read in event data from directory - not reactive
+    # eventData <- readData("../data")
+    
+    fname <- "../data/mergedData.csv"
+    eventD <- reactiveFileReader(intervalMillis = 1000, # refresh rate in ms
+                                 session = session,
+                                 filePath = fname,
+                                 readFunc = read_csv)
+    eventData <<- eventD()
+    eventData$`_time` <<- force_tz(ymd_hms(eventData$`_time`), "EST")
+    
+    # Calculate population density 
+    end.time = (max(eventData$`_time`))
+    
+    # Color palette for polygons
+    colorPal <- "Purples"
+    
+    # Calculate population densities
+    locationBinnedPop <- data.frame("location" = coord$location, "pop" = c(0), "dens" = c(0))
+    # For each location, count the number of unique devices (MAC addresses) that are present during the time time.window.
+    locationBinnedPop$pop <- sapply(locationBinnedPop$location, function(x) {length(unique(eventData$macaddr[eventData$`location.y` == x]))})
+    densities_area  <- sapply(1:N, function(x) {100 * locationBinnedPop$pop[x] / (SPeventData@polygons[[x]]@area * areaConvert)})
+    locationBinnedPop$dens <- densities_area
+    
+    # Setting up palette for choropleth
+    palette_area <- colorNumeric(colorPal, locationBinnedPop$dens)
+    
+    # Getting the marker color depending on its population density
+    getColor <- function(step) {
+      sapply(step$dens, function(val) {
+        if(val < summary(step$dens)[[2]]) {
+          "green"
+        } else if(val > summary(step$dens)[[5]]) {
+          "red" 
+        } else {
+          "orange"
+        } 
+      })
+    }
+    # Icon image
+    icons <- awesomeIcons(
+      icon = 'wifi',
+      iconColor = 'black',
+      library = 'fa',
+      markerColor = getColor(locationBinnedPop)
+    )
+    
+    # Creating map
+    m <- leaflet() %>%
+      setView("map", lng = defLong, lat = defLati, zoom = zm) %>% # sets initial map zoom & center
+      addProviderTiles(providers$OpenStreetMap.BlackAndWhite) %>% 
+      addPolygons(data = SPeventData, 
+                  layerId = locationBinnedPop$location,
+                  group = locationBinnedPop$location,
+                  weight = 1,
+                  color = "black",
+                  fillOpacity = 0.5,
+                  fillColor = ~palette_area(densities_area)) %>% 
+      addAwesomeMarkers(lng = coord$long, 
+                        lat = coord$lat, 
+                        group = locationBinnedPop$location,
+                        icon = icons,
+                        options = markerOptions())
+    
   })
+  
+  # Polygon or marker clicked
+  observeEvent({input$map_shape_click
+    input$map_marker_click}, {
+      # Getting the clicked item's name
+      clickedGroup <- input$map_shape_click$'group'
+      if(is.null(clickedGroup)) {
+        clickedGroup <- input$map_marker_click$'group'
+      }
+      
+      if(clickedGroup %in% buildings) { # If we have building maps for the polygon picked, 
+        if(!clickedGroup %in% buildingsList){
+          source(paste0("./Buildings/", clickedGroup, "/", tolower(clickedGroup), ".R")) # Read in file for creating the map
+          
+          fname <- "../data/mergedData.csv"
+          eventD <- reactiveFileReader(intervalMillis = 1000, # refresh rate in ms
+                                       session = session,
+                                       filePath = fname,
+                                       readFunc = read_csv)
+          eventData <- eventD()
+          eventData$`_time` <- force_tz(ymd_hms(eventData$`_time`), "EST")
+          buildingEventData <- eventData %>% # Filter event data for those in the correct location
+            filter(location.y == clickedGroup)
+          
+          buildingMap <- createMap(buildingEventData) # Create the map
+          output$build <- renderPlot(buildingMap) # Display map
+          showTab("tabs", "Building Map")
+          hideTab("tabs", "General Map")
+          buildingsNamesList <<- c(buildingsList, clickedGroup)
+        }
+      }
+    }) 
+  
+  # Back button pressed
+  observeEvent(input$back, {
+    showTab("tabs", "General Map")
+    hideTab("tabs", "Building Map")
+  })
+  
 }
 
 # Run the application 
