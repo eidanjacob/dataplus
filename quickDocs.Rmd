@@ -1,0 +1,245 @@
+---
+title: "Quick Documentation of Maps and Functions"
+author: "Justina Zou"
+date: "July 27, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+The files described in this Rmd file should have comments that describe the nuances of the code. The purpose of this file is to describe overall how parameters/inputs work and what the ideas behind the described files are.
+
+Files described:
+
+publicDensityMap
+- locationsToCoordinates.csv
+- allAPs.csv
+- mergedData.csv
+- ouiDF.txt
+- eventData.csv
+singleFileApp
+singleFileFromTo
+functions.R
+- howLong
+- findIndex
+- doesMove
+- writeSplunk
+movementAni
+
+## How publicDensityMap works:
+
+This map is a stripped down version of singleFileApp. It is simply a map that can be zoomed in and moved around. It has been modified to remove clickable elements and to only work with the last 15 min (or whatever is specified) time from the most recent time.
+
+It requires five files to run:
+
+1. **locationsToCoordinates.csv** - a csv file used to connect location names with their coordinates. 
+It has four columns:
+location - location name
+lat - latitude of location
+long - longitude of location
+campus - which campus (East, West, Central, or Off) the location is on
+The unique locations were gathered after labelling all the APs with their corresponding locations. 
+
+2. **allAPs.csv** - a csv file used to connect each AP with its corresponding location.
+It has three columns:
+APname - readable name of AP for humans
+APnum - unique number of AP
+location - which location the AP belongs to
+
+The APname and APnum information was gathered using All_Aps.csv in the Duke box. It was then connected to its corresponding location through manual labelling or using the given locations in All_Aps.csv.
+
+3. **mergedData.csv** - the input; processed Splunk data from a directory. 
+
+```{r}
+# reading in data from directory
+df <- NULL
+directory <- "../data" # name of directory with data
+files <- list.files(directory, full.names = TRUE)
+lapply(files, function(fname) {
+  df <<- rbind(df, read_csv(paste0(fname)))
+})
+```
+
+It is set up in such a way so that given the directory name, the code will find all the files in the directory and merge them together into one dataframe (processed Splunk data dataframe, PSDDF). It works under the assumption that the files have already been cleaned.
+The cleaning process is as follows:
+
+```{r}
+splunkData <- read_csv("../eventData.csv")
+
+# match aps to locations, merge for coordinates
+df <- splunkData[!is.na(splunkData$ap),] # remove observations with no ap
+
+# Some aps are in splunk data with name, some with number - code below matches location using whichever is available
+nameMatch = which(validLocations$APname %in% df$ap) # find which aps have their name in the data
+numMatch = which(validLocations$APnum %in% df$ap) # find which aps have their number in the data
+validLocations$ap = c(NA) # new "flexible" column to store either name or number
+validLocations$ap[nameMatch] = validLocations$APname[nameMatch]
+validLocations$ap[numMatch] = validLocations$APnum[numMatch]
+
+validLocations <- merge(coord, validLocations) # link coordinates to locations
+# use the new "flexible" ap variable to merge coordinates onto df
+df <- merge(df, validLocations, by = "ap") # this is the slow step
+
+# merge with OUI table to identify manufacturers
+df$prefix <- sapply(df$macaddr, function(mac){
+  str <- substr(mac, 1, 8)
+  return(gsub(":", "-", toupper(str)))
+})
+oui <- read_csv("../ouiDF.txt")
+df <- merge(df, oui)
+write.csv(df, "../mergedData.csv")
+```
+
+It reads in eventData.csv, which is the raw Splunk csv from Duke Box. 
+The main purpose of the processing is to match each event to its proper location, and match each macaddr to a manufacturer.
+Then, it removes rows without APs and matches APs data from allAPs.csv to locations to coordinates. 
+It goes through the raw Splunk data and creates the columns location.y, campus, APname, APnum, that is, it bins the events into their correct locations. 
+Finally, using **ouiDF.txt**, it creates the columns prefix and org so that macaddrs are matched to their brands.
+
+It writes **mergedData.csv**, which is a dataframe with 17 columns:
+X1, prefix, ap, _time, asa_code, macaddr, slotnum, ssid, ipaddr, location.x, location.y, lat, long, campus, APname, APnum, and org.
+*X1* - row index
+*prefix* - macaddr oui
+*ap* - ap name
+*_time* - time of event
+*location.x* - original location information
+*location.y* - our binned location information
+*campus* - which campus the location is located on
+*APname* - ap name, same as ap
+*APnum* - ap number
+*org* - manufacturer associated with prefix
+
+4. **ouiDF.txt** - txt file with columns prefix and org; used to match macaddrs with their producers
+
+5. **eventData.csv** - raw Splunk data with columns
+_time, asa_code, macaddr, ap, slotnum, ssid, ipaddr, and location
+
+After loading the files, the coordinate information is used to create voronoi cells housing each location.
+
+```{r}
+# draw duke border
+p = Polygon(dukeShape)
+ps = Polygons(list(p),1)
+sps = SpatialPolygons(list(ps))
+
+# remove out-of-bounds locations
+inBounds <- sapply(1:nrow(coord), function(x) {
+  point.in.polygon(coord$long[x], coord$lat[x], unlist(dukeShape[,1]), unlist(dukeShape[,2]))
+})
+coord <- coord[inBounds == 1,]
+N = nrow(coord)
+# calculating voronoi cells and converting to polygons to plot on map
+z <- deldir(coord$long, coord$lat) # computes cells
+# convert cell info to spatial data frame (polygons)
+w <- tile.list(z)
+polys <- vector(mode="list", length=length(w))
+for (i in seq(along=polys)) {
+  pcrds <- cbind(w[[i]]$x, w[[i]]$y)
+  pcrds <- rbind(pcrds, pcrds[1,])
+  polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
+}
+SP <- SpatialPolygons(polys)
+SP <- intersect(SP, sps)
+for(x in 1:nrow(coord)){
+  SP@polygons[[x]]@ID <- as.character(x)
+}
+SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
+# tag polygons with location name
+SPDF@data$ID = coord$location
+sapply(1:length(coord$location), function(x){
+  SPDF@polygons[[x]]@ID <- coord$location[x]
+  SPDF <<- SPDF
+})
+```
+
+The areas of the polygons are calculated to use later for population densities by area. 
+
+How the colors of the markers are chosen is described in the app, but one idea in the future is to read in avg population data from a csv file and choose color based off that.
+
+## How singleFileFromTo works
+
+singleFileFromTo copies singleFileApp's files used and modifies the processing used to calculate population densities. It modifies it because there is less emphasis on a heatmap and more on paths taken by devices. It adds in an extra call to functions.R in the beginning.
+
+There are seven main parameters used in determining which macaddrs to display when paths are visualized. Six parameters are shared with the ones passed to the functions findIndex. These parameters are present in the UI so that they can easily be tweaked to find viable paths.
+
+One of the reasons it runs slowly and will crash after running it too many times is that to visualize the paths, the app has to iterate through each unique macaddr and figure out if it has ever visited fromLoc and toLoc in a viable way. Therefore, one of the seven parameters allows the user to choose how many devices the loop loops through to find viable pathings.
+
+```{r}
+# looping through each macaddr to determine its movement
+      for(i in 1:length(uniqMacs)) { 
+        if(i == as.numeric(input$num)) { # to prevent stuff from crashing
+          break
+        }
+        incProgress(amount = 1/as.numeric(input$num))
+        
+        macDF <- findIndex(uniqMacs[[i]], macsTime, input$from, input$to, input$fromInte, input$toInte, input$betweenInte, input$distInte, numOnMap)
+```
+
+Later, in pathing.Rmd, findIndex is modified slightly to return information relevant to pathing.Rmd.
+
+If a viable mac is found, the app then draws movement lines with colors according to parameters within the code. The corners of the lines represent locations the mac was registered in along its way to the to location. The more opaque the line is, the more macaddrs that have travelled in that way.
+
+```{r}
+  # Colors for movement lines
+  from <- 'red'
+  to <- 'blue'
+  stationary <- 'green'
+  highlight <- 'black'
+  
+  borderInclude <- 'black'
+  
+  flowOp <- 0.1
+```
+
+from is the color of the circle representing the origin location, 
+to is the color of the circle representing the destination location,
+stationary is the color of the circle representing devices that did not move, but were registered to have events in the time interval picked.
+
+Circles were used instead of arrows because they were easier to map with Leaflet.
+
+## How functions.R works
+
+functions.R has four functions. 2/4 are actively being used. The other 2 are for ease of programming.
+
+1. **howLong** - for a given macaddr, and a processed Splunk data dataframe (PSDDF), it summarises the amount of time spent in each location by creating a column called id that represents consecutive location events and grouping those together to calculate the time difference between the first event in that location and the last.
+
+2. **findIndex** - it has 9 parameters; it returns a list full of potentially useful dataframes to visualize how devices get from fromLoc to toLoc.
+
+*mac* - a macaddr
+*macdf* - a PSDDF
+*fromLoc* - the from location
+*toLoc* - the to location
+*fromInte* - the minimum time in seconds that the macaddr has to stay in the from location in order to not be filtered out
+*toInte* - the minimum time in seconds that the macaddr has to stay in the to location in order to not be filtered out
+*betweenInte* - the maximum time in seconds that the macaddr stayed in all the locations between the from location and the to location in order to not be filtered out
+*distInte* - the amount of uneligible locations as dictated by betweenInte to keep
+*numOnMap* - the current number of devices eligible 
+
+*macdf* is a dataframe with six columns:
+macaddr, location, long, lat, time.window, and realTime.
+time.window - the binned time the actual event time falls under
+realTime - time of event
+
+The idea of these "Inte" variables is that the time stayed at a location determines whether the device intended/stayed at the location rather than just passing through. 
+For instance, without these parameters, someone who woke up in Perkins, went back to Kilgo, then to Marketplace, then WestUnion would have a path that spans across campus--not a path that would show how people get from Perkins to WestUnion.
+The times allowed can be changed so that locations like WestUnion can be more accurately represented. For example, people staying at WU might stay for only 5 minutes for take-out rather than 10 minutes, a better indicator that lines were long or they sat down and ate. 
+Increasing distInte increases the devices present, but it decreases the "straightforwardness" of the path.
+If fromLoc is an empty string, then the function grabs all paths ending in toLoc.
+If toLoc is an empty string, then the function grabs all paths starting in fromLoc.
+These two things can be useful to see what are the most common departure buildings when the destination is, say, WestUnion.
+
+3. **doesMove** - for a given PSDDF and a time interval, it reutrns the macaddrs that move within the time interval
+
+This can be useful to filter a dataframe before passing it into other functions to make it faster to run.
+
+4. **writeSplunk** - function that takes raw Splunk data, oui data, locations to coordinates data, and AP to locations data and writes the PSDDF (mergedData.csv) into a csv file. 
+
+This is present in files such as singleFileApp and how it works is described in the documentation. It also exists in functions.R for standalone referenece.
+
+## How movementAni works
+
+The beginning up until the UI is a modified version of the singleFileApp. It is different in that it only calculates the densities for one time stamp. To display ggplot gifs, we need to use renderImage rather than renderPlot.
+
+Like singleFileFromTo, the number of macaddrs displayed is user-defined, however, the for loop for making the location to location map will automatically end when it loops 300 times. This can be taken out.  

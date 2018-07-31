@@ -40,10 +40,11 @@ locs <- dfaptrun %>%
 dfssid <- df0419 %>% # seeing if ssid events change by campus
   group_by(ssid, campus) %>% 
   summarise(n = n())
-dfVO <- df0419 %>% # seeing if ssid events change by locations off campus
-  filter(campus == "Off") %>% 
-  group_by(ssid, location.y) %>%
+dfssidlocs <- df0419 %>% # seeing if ssid events change by locations
+  group_by(ssid, location.y, campus) %>%
   summarise(n = n())
+dfVO <- dfssidlocs %>% # seeing if ssid events change by off campus locations
+  filter(campus == "Off")
 
 # For slotnum usage by campus
 dfapslots <- df0419 %>% 
@@ -75,7 +76,7 @@ dfaptrun$ap <- factor(dfaptrun$ap, levels = dfaptrun$ap[order(dfaptrun$n)]) # re
 
 ### Plotting
 
-This plot will likely not display due to its size.
+This plot will likely not display correctly due to its size.
 
 ```{r}
 ggplot(dfaptrun %>% filter(campus == "West"), aes(x=ap,y=n)) + 
@@ -103,6 +104,37 @@ ggplot(data = dfVO %>%
   labs(title = "0419 ssid usage by offcampus locations") +
   theme_bw()
 ```
+
+### Viewing Dukeblue by DukeVisitor ratios by location
+
+```{r}
+dfblue <- dfssidlocs %>% 
+  filter(ssid == "Dukeblue")
+dfvisit <- dfssidlocs %>% 
+  filter(ssid == "DukeVisitor")
+dfboth <- merge.data.frame(dfblue, dfvisit, by = c("location.y", "campus"))
+dfboth <- dfboth %>% 
+  mutate(ratio = n.x / n.y) # num of dukeblue events / num of dukevisitor
+dfboth$location.y <- factor(dfboth$location.y, levels = dfboth$location.y[order(dfboth$ratio)]) # reorder graph
+ggplot(dfboth, aes(x = location.y, y = ratio)) +
+  geom_col(aes(fill = campus)) +
+  coord_flip() +
+  geom_hline(yintercept = 1) +
+  scale_y_continuous(breaks = sort(c(seq(0, as.integer(max(dfboth$ratio)), length.out = 5), 1))) + 
+  theme_bw() +
+  labs(y = "Dukeblue / DukeVisitor events", 
+       subtitle = "Higher ratio implies more Dukeblue events than DukeVisitor")
+ggplot(dfboth, aes(x = location.y, y = ratio)) +
+  geom_col(aes(fill = campus)) +
+  coord_flip() +
+  geom_hline(yintercept = 1) +
+  scale_y_continuous(breaks = sort(c(seq(0, as.integer(max(dfboth$ratio)), length.out = 5), 1))) + 
+  theme_bw() +
+  facet_wrap(.~campus, scales = "free_y") + # this splits the graph into four 
+  labs(y = "Dukeblue / DukeVisitor events", 
+       subtitle = "Higher ratio implies more Dukeblue events than DukeVisitor")
+```
+
 
 ## Plotting slot 0 by slot 1 usage
 

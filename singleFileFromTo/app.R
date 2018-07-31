@@ -200,22 +200,6 @@ while(end.time > time.windowStart){
 
 legendTitles <- c("Population Density (area)")
 
-# keeping this here just for reference for when the readme is written
-# fromLoc <- "Perkins" # default
-# toLoc <- "WestUnion" # default
-# the intervals can be changed so that locations like WU can be more accurately represented
-# aka people might intend to go to WU for take out, which means they might stay for only 5 min instead
-# of 10 min, a better indicator that the lines were long or they sat down and ate.
-# the betweenInte is 10 min just to keep travel times travel times instead of loitering times
-# the time spent determines whether a device passed through vs stayed
-# fromInte <- 60 * 10 # in seconds
-# betweenInte <- 60 * 5 # in seconds
-# toInte <- 60 * 5 # in seconds
-# max number of locations in between the target locations
-# increasing this number increases the devices present, but it decreases the "straightforwardness"
-# of the lines present
-# distInte <- 2
-
 # app user interface
 ui <- fluidPage(
   
@@ -227,6 +211,8 @@ ui <- fluidPage(
       selectInput("timeStepSelection", "Time Step", choices = timeSteps, selected = timeSteps[1]),
       uiOutput("ui"),
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), inline = TRUE, selected = "All"),
+      
+      p("Please see documentation for information on the meaning of the inputs. Scroll down for information on the map's interactability."),
       
       textInput("from", "From location: ", value = "Perkins"),
       textInput("to", "To location: ", value = "WestUnion"),
@@ -240,7 +226,13 @@ ui <- fluidPage(
       sliderInput("fromInte", "From interval", min = 0, max = 60 * 45, step = 300, value = 60 * 10),
       sliderInput("toInte", "To interval", min = 0, max = 60 * 45, step = 300, value = 60 * 5),
       sliderInput("betweenInte", "Between interval", min = 0, max = 60 * 45, step = 300, value = 60 * 5),
-      sliderInput("distInte", "Location Interval", min = 1, max = 20, step = 1, value = 2)
+      sliderInput("distInte", "Location Interval", min = 1, max = 20, step = 1, value = 2),
+      
+      p("Hovering over the movement lines shows each macaddr and their path."),
+      p("Clicking on the movement line sends that particular macaddr's information into both 'Macaddr's Locations' tabs"),
+      p("The general table is the dataframe of all events relevant to the parameters given."),
+      p("Macaddr's Locations is the general table filtered for only the macaddr that was just clicked."),
+      p("Macaddr's Locations Truncated shows the amount of time it spent at each location for the entire time interval.")
     ),
     mainPanel(
       tabsetPanel(type = "tabs",
