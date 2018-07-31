@@ -10,6 +10,18 @@ Designed for quick use by students/faculty/etc looking for a nearby place with g
 ###
 
 Requirements:
+
+R Packages:
+shiny
+readr
+raster
+sp
+deldir
+dplyr
+rgeos
+ggplot2
+maps
+
 In the same directory as the Application, three csv files must exist with the following (case sensitive) column names:
 
 1) apData.csv
@@ -24,6 +36,8 @@ In the same directory as the Application, three csv files must exist with the fo
 3) eventData.csv
 	- event data can be taken directly from Splunk
 	- "ap" variable must match apData.csv and buildingData.csv
+
+Sample files for Perkins library are provided.
 
 ###
 
@@ -40,7 +54,7 @@ Using our tool to identify coordinates of positions on the image, we record 1) t
 Use a linear regressions (one for X and one for Y) on each floor's reference points to fit them to a set of consistent coordinates. Then feed the coordinates of the APs and walls for each floor into its corresponding linear regression and use the resulting coordinates.
 (Don't worry that the coordinates for different floors overlap - The tool will automatically move the floors so they are not displayed on top of each other.)
 
-If I have time I will make an app to do the math for this as well.
+I've made another app to make this easier (see 'CoordinateTransformer'). Upload a csv of coordinates (needs 2 columns named X and Y, with the first two rows specifying the reference points' untransformed coordinates). Indicate the reference points' "true" coordinates and a file name for the output. The output is a copy of the input, replacing the coordinates with transformed values.
 
 ###
 

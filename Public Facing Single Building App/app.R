@@ -1,50 +1,45 @@
 library(shiny)
 library(readr)
 library(raster)
-library(sp)
 library(deldir)
-library(lubridate)
 library(dplyr)
 library(rgeos)
 library(ggplot2)
-library(leaflet)
-library(tidyr)
-library(RColorBrewer)
 library(maps)
 
 # Global Vars
-eventsdf <- voronoiSPDF <- NULL
+apsdf <- read_csv("./apData.csv")
+wallsdf<- read_csv("./buildingData.csv")
+floors = unique(apsdf$floor)
 
-apsdf <- read_csv("../perkins_aps")
-wallsdf<- read_csv("../perkins_walls")
-floors = length(unique(apsdf$floor))
-fn = length(floors)
+threshold = 10 # APs with this many or fewer events will display 0 
+refresh = 1 # Refresh rate in minutes
 
 ui <- fluidPage(
-  sidebarLayout(
-    sidebarPanel("Text and Stuff"),
-    mainPanel("A pretty picture")
-  )
+  plotOutput("myPlot")
 )
 
 server <- function(input, output){
-  
-  reactive(eventsdf, {
+  observe({
+    invalidateLater(refresh * 60000)
+    eventsdf <- read_csv("./eventData.csv")
+    # Finds the largest floor's span along each dimension.
     xRange <- max(
       sapply(floors, function(f){
-        max(wallsdf$transX[wallsdf$floor == f]) - 
-          min(wallsdf$transX[wallsdf$floor == f])
+        max(wallsdf$X[wallsdf$floor == f]) - 
+          min(wallsdf$X[wallsdf$floor == f])
       })
     )
     yRange <- max(
       sapply(floors, function(f){
-        max(wallsdf$transY[wallsdf$floor == f]) - 
-          min(wallsdf$transY[wallsdf$floor == f])
+        max(wallsdf$Y[wallsdf$floor == f]) - 
+          min(wallsdf$Y[wallsdf$floor == f])
       })
     )
+    # Offsets calculated to arrange each floor to avoid overplotting.
     offsets <- data.frame(
       t(
-        sapply(1:fn, function(i){
+        sapply(1:length(floors), function(i){
           xOff <- (xRange+20) * ((i - 1) %% 2)
           yOff <- (yRange) * floor(i/2 - 1/2)
           return(c(xOff, yOff))
@@ -53,28 +48,30 @@ server <- function(input, output){
     )
     rownames(offsets) <- as.character(floors)
     colnames(offsets) <- c("xOff", "yOff")
-    
-    xMin <- min(wallsdf$transX)
-    yMin <- min(wallsdf$transY)
-    labelLocations <- offsets %>%
+    # (xMin, yMin) is a sort of 'origin' point
+    xMin <- min(wallsdf$X)
+    yMin <- min(wallsdf$Y)
+    # Want to label floors, so calculate location of labels.
+    labs <- offsets %>%
       mutate(xOff = xOff + xMin + xRange/2) %>%
       mutate(yOff = yOff + yMin + yRange + 50)
-    
+    names(labs) <- c("X", "Y")
+    labs$text <- paste("Floor:", floors)
+    # Add the offsets.
     wallsdf <- wallsdf %>%
-      mutate(transX = transX + offsets[as.character(wallsdf$floor), "xOff"]) %>%
-      mutate(transY = transY + offsets[as.character(wallsdf$floor), "yOff"])
-    
+      mutate(X = X + offsets[as.character(wallsdf$floor), "xOff"]) %>%
+      mutate(Y = Y + offsets[as.character(wallsdf$floor), "yOff"])
     apsdf <- apsdf %>%
-      mutate(transX = transX + offsets[as.character(apsdf$floor), "xOff"]) %>%
-      mutate(transY = transY + offsets[as.character(apsdf$floor), "yOff"])
-    
-    # Split stuff by floor and draw some polygons.
+      mutate(X = X + offsets[as.character(apsdf$floor), "xOff"]) %>%
+      mutate(Y = Y + offsets[as.character(apsdf$floor), "yOff"])
+    # Draw a polygon around each floor.
     borderList <- lapply(floors, function(f){
       fwalls <- wallsdf %>% filter(floor == f)
-      border <- Polygons(list(Polygon(fwalls[,c("transX", "transY")])),as.character(f))
+      border <- Polygons(list(Polygon(fwalls[,c("X", "Y")])),as.character(f))
     })
     joined <- SpatialPolygons(borderList)
-    fcells <- deldir(data.frame(x = apsdf$transX, y = apsdf$transY))
+    # Draw voronoi cells around each Access Point.
+    fcells <- deldir(data.frame(x = apsdf$X, y = apsdf$Y))
     w = tile.list(fcells)
     polys = vector(mode = "list", length = length(w))
     for (j in seq(along=polys)) {
@@ -87,50 +84,34 @@ server <- function(input, output){
       SP@polygons[[x]]@ID <- as.character(x)
     }
     SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(
-      x = apsdf$transX, 
-      y = apsdf$transY))
-    # tag polygons with ap name
+      x = apsdf$X, 
+      y = apsdf$Y))
+    # Tag voronoi cells with ap name
     SPDF@data$id = as.character(apsdf[, "ap"][[1]])
     sapply(1:length(apsdf[, "ap"]), function(x){
       SPDF@polygons[[x]]@ID <- as.character(apsdf[, "ap"][[1]][x])
       SPDF <<- SPDF
     })
+    # Intersect voronoi cells with polygons of floors
     voronoiSPDF <- raster::intersect(SPDF, joined)
-    output$floorPlan <- renderPlot({
-      plot(voronoiSPDF, main = "Floor Plan Generated from Uploaded Files")})
-    output$diagnostic <- renderUI(HTML(
-      paste(msgText, "<br/> Polygons drawn, please confirm.")))
-    showTab("tabs", "Confirm Upload")
-    
+    # Count the number of events per access point. This is a crude measure of network load but it's good enough for students.
     chartData <- summarise(group_by(eventsdf, ap), n())
-    
-    chartData$n <- chartData$`n()` * as.numeric((chartData$n < 5))
-    
-    # convert polys to ggplot2 usable format and save in list
+    # If there are 10 or fewer events, display 0 events. (Don't want to point out where people may be sitting alone).
+    chartData$Utilization <- chartData$`n()` * as.numeric((chartData$`n()` > threshold))
+    # Convert polygons to ggplot2-usable format and save in list
     fortified <- fortify(voronoiSPDF, region = "id")
-    
-    
     ready <- left_join(fortified, chartData, by = c("id" = "ap"))
-    ggplot() +
-      geom_polygon(data = ready, aes(fill = n,
-                                     x = long,
-                                     y = lat,
-                                     group = group)
-      ) +
-      scale_fill_gradient(low = "#e6e6Fa", high = "#4b0082") +
-      coord_fixed() +
-      geom_path(data = ready, aes(x = long,
-                                  y = lat,
-                                  group = group),
-                color = "gray",
-                size = 1) + 
-      theme_bw() + xlab("Feet") + ylab("Feet") +
-      geom_text(aes(x = labelLocations[,1],
-                    y = labelLocations[,2],
-                    label = paste("Floor", floors)))
-    
+    output$myPlot <- renderPlot({
+      ggplot() + geom_polygon(data = ready, aes(fill = Utilization, x = long, y = lat, group = group)) +
+        scale_fill_gradient(low = "#e6e6Fa", high = "#4b0082") +
+        coord_fixed() +
+        geom_path(data = ready, aes(x = long, y = lat, group = group), color = "gray", size = 1) + 
+        theme_bw() +
+        theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+              axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank()) + 
+        geom_text(aes(x = X, y = Y, label = text), data = labs)
+    })
   })
-  
 }
 
 shinyApp(ui = ui, server = server)
