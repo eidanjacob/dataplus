@@ -1,6 +1,6 @@
 ---
 title: "Quick Documentation of Maps and Functions"
-author: "Justina Zou"
+author: "Justina Zou - jmz15@duke.edu"
 date: "July 27, 2018"
 output: html_document
 ---
@@ -9,44 +9,48 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
 ```
 
-The files described in this Rmd file should have comments that describe the nuances of the code. The purpose of this file is to describe overall how parameters/inputs work and what the ideas behind the described files are.
+## How singleFileApp works:
 
-Files described:
+It features a fully interactive map of Duke's campus complete with:
 
-publicDensityMap
-- locationsToCoordinates.csv
-- allAPs.csv
-- mergedData.csv
-- ouiDF.txt
-- eventData.csv
-singleFileApp
-singleFileFromTo
-functions.R
-- howLong
-- findIndex
-- doesMove
-- writeSplunk
-movementAni
+1. Time Step selection - change the time window bins to display densities of
 
-## How publicDensityMap works:
+2. Time - change the time window to display; can also press the blue arrow underneath to view a simple timelapse.
 
-This map is a stripped down version of singleFileApp. It is simply a map that can be zoomed in and moved around. It has been modified to remove clickable elements and to only work with the last 15 min (or whatever is specified) time from the most recent time.
+3. View - change the type of coloring to display; e.g. bin by population per area, population per ap, etc.
 
-It requires five files to run:
+4. Zoom View - convenient buttons to zoom in on the different campuses of Duke
+
+5. Log Scale - change the scale to logarithmic
+
+6. Track Flow - enable movement line visualization; the number of macaddrs to visualize is limited with a random sample within the code for faster run times; see singleFileFromTo for explanation of colors
+- Remove Cross Campus Lines - removes lines that jump from different campuses; it does remove macaddrs that have only cross campus paths, however
+- Enable Clustering - clusters stationary macaddrs; useful for knowing exactly how many macs did not move at all in that time window
+
+7. Track Single Macaddr - input a macaddr to track their movement at the current time stamp; if the macaddr exists, underneath the text input box are the times in which events for the macaddr is present
+Clickable Polygons - click a polygon to remove it and click where it used to be to put it back
+Clickable Lines - hover over a line to view the corresponding macaddr; click on a line to view its event data in the Mac Table tab
+Three tabs:
+- Map, display map
+- Table, display entire time's data frame of events 
+- Mac Table, display the clicked macaddr's events
+
+It requires six files to run:
 
 1. **locationsToCoordinates.csv** - a csv file used to connect location names with their coordinates. 
 It has four columns:
-location - location name
-lat - latitude of location
-long - longitude of location
-campus - which campus (East, West, Central, or Off) the location is on
+- location - location name
+- lat - latitude of location
+- long - longitude of location
+- campus - which campus (East, West, Central, or Off) the location is on
+
 The unique locations were gathered after labelling all the APs with their corresponding locations. 
 
 2. **allAPs.csv** - a csv file used to connect each AP with its corresponding location.
 It has three columns:
-APname - readable name of AP for humans
-APnum - unique number of AP
-location - which location the AP belongs to
+- APname - readable name of AP for humans
+- APnum - unique number of AP
+- location - which location the AP belongs to
 
 The APname and APnum information was gathered using All_Aps.csv in the Duke box. It was then connected to its corresponding location through manual labelling or using the given locations in All_Aps.csv.
 
@@ -63,6 +67,7 @@ lapply(files, function(fname) {
 ```
 
 It is set up in such a way so that given the directory name, the code will find all the files in the directory and merge them together into one dataframe (processed Splunk data dataframe, PSDDF). It works under the assumption that the files have already been cleaned.
+
 The cleaning process is as follows:
 
 ```{r}
@@ -99,22 +104,26 @@ It goes through the raw Splunk data and creates the columns location.y, campus, 
 Finally, using **ouiDF.txt**, it creates the columns prefix and org so that macaddrs are matched to their brands.
 
 It writes **mergedData.csv**, which is a dataframe with 17 columns:
+
 X1, prefix, ap, _time, asa_code, macaddr, slotnum, ssid, ipaddr, location.x, location.y, lat, long, campus, APname, APnum, and org.
-*X1* - row index
-*prefix* - macaddr oui
-*ap* - ap name
-*_time* - time of event
-*location.x* - original location information
-*location.y* - our binned location information
-*campus* - which campus the location is located on
-*APname* - ap name, same as ap
-*APnum* - ap number
-*org* - manufacturer associated with prefix
+
+- *X1* - row index
+- *prefix* - macaddr oui
+- *ap* - ap name
+- *_time* - time of event
+- *location.x* - original location information
+- *location.y* - our binned location information
+- *campus* - which campus the location is located on
+- *APname* - ap name, same as ap
+- *APnum* - ap number
+- *org* - manufacturer associated with prefix
 
 4. **ouiDF.txt** - txt file with columns prefix and org; used to match macaddrs with their producers
 
 5. **eventData.csv** - raw Splunk data with columns
 _time, asa_code, macaddr, ap, slotnum, ssid, ipaddr, and location
+
+6. **dukeShape.txt** - txt file of the coordinates of the shape of Duke's campus; used to artificially cut down the size of polygons into a more recognizable shape
 
 After loading the files, the coordinate information is used to create voronoi cells housing each location.
 
@@ -154,7 +163,11 @@ sapply(1:length(coord$location), function(x){
 })
 ```
 
-The areas of the polygons are calculated to use later for population densities by area. 
+The areas of the polygons are calculated to use later for population densities by area.
+
+## How publicDensityMap works:
+
+This map is a stripped down version of singleFileApp. The only interactive part of the map is clicking on a building polygon allows the user to "zoom in" on the location. The map is set up in such a way so that it checks every 10 seconds to see if the file is modified. If it is, the map refreshes.
 
 How the colors of the markers are chosen is described in the app, but one idea in the future is to read in avg population data from a csv file and choose color based off that.
 
@@ -162,7 +175,9 @@ How the colors of the markers are chosen is described in the app, but one idea i
 
 singleFileFromTo copies singleFileApp's files used and modifies the processing used to calculate population densities. It modifies it because there is less emphasis on a heatmap and more on paths taken by devices. It adds in an extra call to functions.R in the beginning.
 
-There are seven main parameters used in determining which macaddrs to display when paths are visualized. Six parameters are shared with the ones passed to the functions findIndex. These parameters are present in the UI so that they can easily be tweaked to find viable paths.
+There are seven main parameters used in determining which macaddrs to display when paths are visualized. Six parameters are shared with the ones passed to the functions findIndex (see findIndex for more information). These parameters are present in the UI so that they can easily be tweaked to find viable paths.
+
+The time interval can also be changed so that only devices with registered movements during the selected interval is visualized.
 
 One of the reasons it runs slowly and will crash after running it too many times is that to visualize the paths, the app has to iterate through each unique macaddr and figure out if it has ever visited fromLoc and toLoc in a viable way. Therefore, one of the seven parameters allows the user to choose how many devices the loop loops through to find viable pathings.
 
@@ -207,27 +222,32 @@ functions.R has four functions. 2/4 are actively being used. The other 2 are for
 
 2. **findIndex** - it has 9 parameters; it returns a list full of potentially useful dataframes to visualize how devices get from fromLoc to toLoc.
 
-*mac* - a macaddr
-*macdf* - a PSDDF
-*fromLoc* - the from location
-*toLoc* - the to location
-*fromInte* - the minimum time in seconds that the macaddr has to stay in the from location in order to not be filtered out
-*toInte* - the minimum time in seconds that the macaddr has to stay in the to location in order to not be filtered out
-*betweenInte* - the maximum time in seconds that the macaddr stayed in all the locations between the from location and the to location in order to not be filtered out
-*distInte* - the amount of uneligible locations as dictated by betweenInte to keep
-*numOnMap* - the current number of devices eligible 
+- *mac* - a macaddr
+- *macdf* - a PSDDF
+- *fromLoc* - the from location
+- *toLoc* - the to location
+- *fromInte* - the minimum time in seconds that the macaddr has to stay in the from location in order to not be filtered out
+- *toInte* - the minimum time in seconds that the macaddr has to stay in the to location in order to not be filtered out
+- *betweenInte* - the maximum time in seconds that the macaddr stayed in all the locations between the from location and the to location in order to not be filtered out
+- *distInte* - the amount of uneligible locations as dictated by betweenInte to keep
+- *numOnMap* - the current number of devices eligible 
 
 *macdf* is a dataframe with six columns:
 macaddr, location, long, lat, time.window, and realTime.
-time.window - the binned time the actual event time falls under
-realTime - time of event
+
+- time.window - the binned time the actual event time falls under
+- realTime - time of event
 
 The idea of these "Inte" variables is that the time stayed at a location determines whether the device intended/stayed at the location rather than just passing through. 
+
 For instance, without these parameters, someone who woke up in Perkins, went back to Kilgo, then to Marketplace, then WestUnion would have a path that spans across campus--not a path that would show how people get from Perkins to WestUnion.
+
 The times allowed can be changed so that locations like WestUnion can be more accurately represented. For example, people staying at WU might stay for only 5 minutes for take-out rather than 10 minutes, a better indicator that lines were long or they sat down and ate. 
+
 Increasing distInte increases the devices present, but it decreases the "straightforwardness" of the path.
-If fromLoc is an empty string, then the function grabs all paths ending in toLoc.
-If toLoc is an empty string, then the function grabs all paths starting in fromLoc.
+
+If fromLoc is an empty string, then the function grabs all paths ending in toLoc. If toLoc is an empty string, then the function grabs all paths starting in fromLoc.
+
 These two things can be useful to see what are the most common departure buildings when the destination is, say, WestUnion.
 
 3. **doesMove** - for a given PSDDF and a time interval, it reutrns the macaddrs that move within the time interval
@@ -243,3 +263,117 @@ This is present in files such as singleFileApp and how it works is described in 
 The beginning up until the UI is a modified version of the singleFileApp. It is different in that it only calculates the densities for one time stamp. To display ggplot gifs, we need to use renderImage rather than renderPlot.
 
 Like singleFileFromTo, the number of macaddrs displayed is user-defined, however, the for loop for making the location to location map will automatically end when it loops 300 times. This can be taken out.  
+
+## GGmap
+
+Not currently in use; can be ignored. Was initial (think week 1) testing of how to map things.
+
+## Public Facing Single Building App
+
+See folder for its documentation.
+
+## chordDiagram
+
+Generates a chord diagram by campus. Can take in a file of events and create the diagram. Useful for another type of path visualization.
+
+## demo
+
+Has four components that is copy-pasted from corresponding apps:
+
+1. a static version of publicDensityMap
+2. singleFileApp
+3. perkinsApp
+4. various plot-generating code from funPlots.Rmd
+
+This app is useful for showing a demo of the maps we've created without pressing "run app" several times.
+
+## oldBackupForPresentation
+
+Old version of singleFileApp completely for "before-after" comparisons of our work; can be ignored.
+
+## perkinsApp
+
+Building map generater. Requires locations of APs and walls to work. It is an early version of Public Facing Single Building App that features file uploading in the app rather than through directories.
+
+## perkinsMaps
+
+Initial mapping of Perkins APs and walls; can be ignored. The relevant AP locations and wall data is in the main directory.
+
+## simulator
+
+UI to wrap around simulation mechanics. Currently just a UI.
+
+## singleFileSLDF
+
+Attempt at making singleFileFromTo more efficient by calculating everything at the beginning; can be ignored. 
+
+## speeding
+
+Script to automatically detect devices that are going faster than physically possible.
+
+## bytesExtractor.R
+
+Contains functions that help manage bytes data.
+
+- **writeBytes** - takes the first five minutes of bytes data and merges it with the rest of the days' bytes data.
+- **mergeBytesSplunk** - merge bytes data and Splunk data by ip address
+
+## cleanOUI.R
+
+Script that reads in OUI data and matches mac addresses to manufacturers. It then writes the output file into a directory.
+
+## datamerge.R
+
+Script that matches one of the initial AP lists with their corresponding locations; can be ignored.
+
+## errorDetection.Rmd
+
+AP error detector that checks for problematic APs by looking at the time before a device registers a new event.
+
+## findPaths.R
+
+Initial script to find common paths; can be ignored. A better version exists in pathing.Rmd
+
+## funPlots.Rmd
+
+ggplots of various interesting things like top 5 aps by location.
+
+## markov.R
+
+Initial script for Markov modeling.
+
+## matchOUI.R
+
+Script that matches a macaddress to its manufacturer, given a dataframe and a lookup table.
+
+## pathing.Rmd
+
+Pathing visualizations from locations and APs. 
+
+## perkins_aps
+
+File of Perkins AP coordinates
+
+## perkins_walls
+
+File of Perkins wall coordinates
+
+## perkinsextractor.R
+
+Script that merges all raw Splunk data concerning Perkins events
+
+## server.R
+
+Initial Shiny app tests; can be ignored.
+
+## ui.R
+
+Initial Shiny app tests; can be ignored.
+
+## summaryStats.R
+
+Initial try to calculate fun stats. Contains script on calculating average time to get from location to location; can be ignored. More recent scripts, such as the ones in pathing.Rmd should be more efficient/intuitive for these calculations.
+
+## voronoi.Rmd
+
+Initial try to make voronoi cells; can be ignored.

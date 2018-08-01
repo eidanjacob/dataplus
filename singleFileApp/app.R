@@ -249,7 +249,7 @@ ui <- fluidPage(
                                                  "Population Density (both)" = 3, "Population (raw)" = 4), selected = 1),
       radioButtons("focus", "Zoom View", choices = c("All", "East", "Central", "West"), selected = "All"),
       checkboxInput("log", "Log Scale", value = FALSE),
-      checkboxInput("flow", "Track flow", value = FALSE),
+      checkboxInput("flow", "Track Flow", value = FALSE),
       conditionalPanel( 
         condition = "input.flow",
         checkboxInput("removeEW", "Remove Cross Campus Lines", value = FALSE),

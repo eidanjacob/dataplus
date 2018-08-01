@@ -12,6 +12,7 @@ library(lubridate) # for easy handling of times and dates
 library(geosphere) # for haversine formula (calculate distance on sphere)
 library(raster) # for constructing polygons  
 library(mapview) # for saving leaflet map
+library(ggplot2) # for building maps
 
 # reading in data (project folder is working directory)
 coord <- read_csv("locationsToCoordinates.csv") # locations to coordinates look up table
@@ -20,9 +21,14 @@ dukeShape <- read_csv("dukeShape.txt", col_names = FALSE) # shape of duke's camp
 
 # List of buildings with floor info
 buildings <- list.files("./Buildings")
+# File name of data
+fname <- "../data/mergedData.csv"
 buildingsNamesList <- NULL # vector of names of already calculated maps
 buildingsList <- NULL # list of plots
-
+lastUpdate <- 0 # last time the data file was updated
+lastUpdateMap <- 0 # last time the maps were updated
+eventData <- NULL
+first <- TRUE # indicates first run through
 
 # draw duke border
 p = Polygon(dukeShape)
@@ -90,19 +96,30 @@ server <- function(input, output, session) {
   
   hideTab("tabs", "Building Map")
   
+  observe({
+    invalidateLater(10 * 1000) # refresh rate in ms
+    currUpdate <- file.info(fname)$ctime[1]
+    if(lastUpdate != currUpdate) {
+      eventData <<- read_csv(fname)
+      eventData$`_time` <<- force_tz(ymd_hms(eventData$`_time`), "EST")
+      lastUpdate <<- file.info(fname)$ctime[1]
+      # Reset building lists
+      buildingsNamesList <<- NULL
+      buildingsList <<- NULL
+    }
+  })
+  
+  observe({
+    
+    invalidateLater(10 * 1000) # refresh rate in ms
+    currUpdate <- file.info(fname)$ctime[1]
+  
+    if(currUpdate != lastUpdateMap){
+    
   # Drawing map
   output$map <- renderLeaflet({ 
     
-    # Read in event data from directory - not reactive
-    # eventData <- readData("../data")
-    
-    fname <- "../data/mergedData.csv"
-    eventD <- reactiveFileReader(intervalMillis = 1000, # refresh rate in ms
-                                 session = session,
-                                 filePath = fname,
-                                 readFunc = read_csv)
-    eventData <<- eventD()
-    eventData$`_time` <<- force_tz(ymd_hms(eventData$`_time`), "EST")
+    lastUpdateMap <<- currUpdate
     
     # Calculate population density 
     end.time = (max(eventData$`_time`))
@@ -156,40 +173,41 @@ server <- function(input, output, session) {
                         group = locationBinnedPop$location,
                         icon = icons,
                         options = markerOptions())
-    
+    })
+  }
   })
   
   # Polygon or marker clicked
-  observeEvent({input$map_shape_click
-    input$map_marker_click}, {
-      # Getting the clicked item's name
+  observeEvent({input$map_shape_click}, { # will also rerun if file changed
+    
       clickedGroup <- input$map_shape_click$'group'
-      if(is.null(clickedGroup)) {
-        clickedGroup <- input$map_marker_click$'group'
-      }
+        
+      invalidateLater(10 * 1000) # refresh rate in ms
       
-      if(clickedGroup %in% buildings) { # If we have building maps for the polygon picked, 
-        if(!clickedGroup %in% buildingsList){
-          source(paste0("./Buildings/", clickedGroup, "/", tolower(clickedGroup), ".R")) # Read in file for creating the map
+      
+      # Current issue is that if you're viewing a building map and the file updates, the building map will not update.
+      
+      
+      if(clickedGroup %in% buildings) { # If we have building maps for the polygon picked,
+        if(!clickedGroup %in% buildingsNamesList){ # and if we don't have a previously stored, current map,
+          source(paste0("./Buildings/", clickedGroup, "/", tolower(clickedGroup), ".R")) # then read in file for creating the map,
+          # notice that the file name must be lowercase.R in a folder with its Location name as written in the location lookup table
           
-          fname <- "../data/mergedData.csv"
-          eventD <- reactiveFileReader(intervalMillis = 1000, # refresh rate in ms
-                                       session = session,
-                                       filePath = fname,
-                                       readFunc = read_csv)
-          eventData <- eventD()
-          eventData$`_time` <- force_tz(ymd_hms(eventData$`_time`), "EST")
-          buildingEventData <- eventData %>% # Filter event data for those in the correct location
+          buildingEventData <- eventData %>% # filter event data for those in the correct location,
             filter(location.y == clickedGroup)
           
-          buildingMap <- createMap(buildingEventData) # Create the map
-          output$build <- renderPlot(buildingMap) # Display map
-          showTab("tabs", "Building Map")
-          hideTab("tabs", "General Map")
-          buildingsNamesList <<- c(buildingsList, clickedGroup)
+          buildingMap <- createMap(buildingEventData) # create the map,
+          buildingMap <- list(buildingMap)
+          
+          buildingsNamesList <<- c(buildingsNamesList, clickedGroup) # add to list of buildings that have already been generated,
+          buildingsList <<- c(buildingsList, buildingMap) # and save drawn map
         }
+        index <- base::match(clickedGroup, buildingsNamesList)
+        output$build <- renderPlot(buildingsList[[index]]) # Display map
+        showTab("tabs", "Building Map")
+        hideTab("tabs", "General Map")
       }
-    }) 
+    }, ignoreInit = TRUE) 
   
   # Back button pressed
   observeEvent(input$back, {

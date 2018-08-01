@@ -24,7 +24,7 @@ library(rgeos)
 library(data.table) # for creating column indicating same location
 library(igraph)
 coord <- read_csv("locationsToCoordinates.csv") # for location data
-df0419 <- read_csv("data/mergedData0419.csv") # dataset we are using
+df0419 <- read_csv("mergedData0419.csv") # dataset we are using
 ```
 
 ## Modifying findIndex and howLong
@@ -34,7 +34,7 @@ This is done because I had trouble passing in parameters to the original functio
 ```{r}
 # returns dataframe with columns
 # macaddr, id, fromLoc, totalTime, startTime, and endTime
-# where total time is how long the ma spent at the location
+# where total time is how long the mac spent at the location
 howLong <- function(macdf) {
   macdf <- macdf %>% # creating column with index that changes when location changes
     group_by(macaddr) %>% 
@@ -430,7 +430,7 @@ knitr::kable(notAdjLoc[1:20, ], format = "html")
 ```{r notadjap}
 notAdjAP <- NULL
 delete <- NULL
-delete <- sapply(1:200, function(i){ # 1:length(dfGenAPTrun$fromLoc) ; using 100 to speed stuff up
+delete <- sapply(1:500, function(i){ # 1:length(dfGenAPTrun$fromLoc) ; using 100 to speed stuff up
   from <- as.character(dfGenAPTrun$fromLoc[i])
   to <- as.character(dfGenAPTrun$toLoc[i])
   if(!adjTable[from, to] & from != to) { # if A and B aren't adjacent
@@ -474,7 +474,7 @@ knitr::kable(popPathAPUniqMac[1:20, ], format = "html")
 
 # Nonadjacent pathing
 notAdjAP <- NULL
-for(i in 1:200) { # 1:length(popPathAPUniqMac$fromLoc)
+for(i in 1:500) { # 1:length(popPathAPUniqMac$fromLoc)
   from <- as.character(popPathAPUniqMac$fromLoc[i])
   to <- as.character(popPathAPUniqMac$toLoc[i])
   if(!adjTable[from, to] & from != to) { # if A and B aren't adjacent
@@ -487,12 +487,9 @@ knitr::kable(notAdjAP[1:20, ], format = "html")
 # Different location jumps
 locJumps <- popPathAPUniqMac[which(popPathAPUniqMac$fromLoc != popPathAPUniqMac$toLoc), ] # jumps where locations are different
 
-locJumps <- locJumps %>%
-  group_by(fromAP, toAP, fromLoc, toLoc) %>%
-  summarise(freq = n()) %>%
-  arrange(desc(freq))
-
 knitr::kable(locJumps[1:20, ], format = "html")
 ```
+
+
 
 Future work could look at the frequency discrepancies between A -> B and B -> A.

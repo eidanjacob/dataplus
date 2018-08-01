@@ -192,7 +192,7 @@ writeSplunk <- function(splunkFile, ouiFile, validLocations, coord) {
   })
   oui <- read_csv(ouiFile)
   df <- merge(df, oui)
-  #write.csv(df, "../mergedData.csv")
+  write.csv(df, "../mergedData.csv")
   
   return(df)
 }
