@@ -14,9 +14,13 @@ floors = unique(apsdf$floor)
 
 threshold = 10 # APs with this many or fewer events will display 0 
 refresh = 1 # Refresh rate in minutes
+reportFile = "reportFile.txt"
+con <- file(reportFile, "w")
+cat("Access Points in Building Data that are missing from Event Data\n", file = con)
+close(con)
 
 ui <- fluidPage(
-  plotOutput("myPlot")
+  plotOutput("myPlot", width = "100%", height = "650")
 )
 
 server <- function(input, output){
@@ -56,7 +60,7 @@ server <- function(input, output){
       mutate(xOff = xOff + xMin + xRange/2) %>%
       mutate(yOff = yOff + yMin + yRange + 50)
     names(labs) <- c("X", "Y")
-    labs$text <- paste("Floor:", floors)
+    labs$text <- paste("Floor", floors)
     # Add the offsets.
     wallsdf <- wallsdf %>%
       mutate(X = X + offsets[as.character(wallsdf$floor), "xOff"]) %>%
@@ -96,6 +100,15 @@ server <- function(input, output){
     voronoiSPDF <- raster::intersect(SPDF, joined)
     # Count the number of events per access point. This is a crude measure of network load but it's good enough for students.
     chartData <- summarise(group_by(eventsdf, ap), n())
+    missing <- apsdf$ap[which( !(apsdf$ap %in% chartData$ap))]
+    missdf <- data.frame(missing, 0)
+    for(missingAP in missing){
+      con <- file(reportFile, "a")
+      cat(missingAP, as.character(Sys.time()), "\n", file = con, append = TRUE)
+      close(con)
+    }
+    names(missdf) <- names(chartData)
+    chartData <- rbind(chartData, missdf)
     # If there are 10 or fewer events, display 0 events. (Don't want to point out where people may be sitting alone).
     chartData$Utilization <- chartData$`n()` * as.numeric((chartData$`n()` > threshold))
     # Convert polygons to ggplot2-usable format and save in list
@@ -103,13 +116,15 @@ server <- function(input, output){
     ready <- left_join(fortified, chartData, by = c("id" = "ap"))
     output$myPlot <- renderPlot({
       ggplot() + geom_polygon(data = ready, aes(fill = Utilization, x = long, y = lat, group = group)) +
-        scale_fill_gradient(low = "#e6e6Fa", high = "#4b0082") +
-        coord_fixed() +
-        geom_path(data = ready, aes(x = long, y = lat, group = group), color = "gray", size = 1) + 
-        theme_bw() +
+        scale_fill_gradient(low = "#e3e4e8", high = "#001A57", guide = FALSE) +
+        coord_fixed() + ggtitle("WiFi Utilization in Perkins Library", subtitle = "Wireless access points in darker locations are experiencing greater activity.") + 
+        geom_path(data = ready, aes(x = long, y = lat, group = group), color = "white", size = 1) + 
         theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(),
-              axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank()) + 
-        geom_text(aes(x = X, y = Y, label = text), data = labs)
+              axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+              panel.background = element_rect(fill = "white"),
+              plot.title = element_text(size = 20),
+              plot.subtitle = element_text(size = 15)) + 
+        geom_text(aes(x = X, y = Y, label = text), data = labs, size = 7)
     })
   })
 }
