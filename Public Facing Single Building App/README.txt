@@ -37,14 +37,14 @@ In the same directory as the Application, three csv files must exist with the fo
 	- event data can be taken directly from Splunk
 	- "ap" variable must match apData.csv and buildingData.csv
 
-Sample files for Perkins library are provided.
+Extra columns will be ignored. Sample files for Perkins library are provided.
 
 ###
 
 Tips for creating apData.csv and buildingData.csv:
 
 If you already have floor-by-floor images of the building with its access points, you need to set a consistent coordinate system on the image.
-Many online services can do this: To produce the maps for Perkins floors 0 to 4, I used https://www.mobilefish.com/services/record_mouse_coordinates/record_mouse_coordinates.php, but other tools may be more useful.
+Many online services can do this: To produce the maps for Perkins floors 0 to 3, I used https://www.mobilefish.com/services/record_mouse_coordinates/record_mouse_coordinates.php, but other tools may be more useful.
 If you are using multiple floors, it's important that the coordinate system is consistent along all the floors. If the images are not the same shape or size this may not be the case. One solution is to choose a pair of 'reference' points on each image (say, the NW and SE corners of the building or of a room) and transform the coordinates you generate for each image based off of that. This is annoying but only needs to be done once!
 
 Details on Transforming coordinates:

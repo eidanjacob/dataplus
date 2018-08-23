@@ -21,7 +21,7 @@ txtscl <- 1 # Text scaling factor (reduce if text too large)
 
 # Global Variables
 apsdf <- read_csv("./apData.csv")
-wallsdf<- read_csv("./buildingData.csv")
+wallsdf <- read_csv("./buildingData.csv")
 floors = unique(apsdf$floor)
 reportFile = "reportFile.txt"
 con <- file(reportFile, "w")
