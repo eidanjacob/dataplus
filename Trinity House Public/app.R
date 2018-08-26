@@ -52,8 +52,8 @@ server <- function(input, output){
   offsets <- data.frame(
     t(
       sapply(1:length(floors), function(i){
-        xOff <- (xRange) * ((i - 1) %% 2)
-        yOff <- (yRange * 0.8) * floor(i/2 - 1/2)
+        xOff <- (xRange*1.2) * ((i - 1) %% 2)
+        yOff <- (yRange*1.2) * floor(i/2 - 1/2)
         return(c(xOff, yOff))
       })
     )
@@ -119,17 +119,19 @@ server <- function(input, output){
     # Count the number of events per access point. This is a crude measure of network load but it's good enough for students.
     eventsdf <- read_csv("./eventData.csv")
     chartData <- summarise(group_by(eventsdf, ap), n())
-    
+  
     # Are there access points with no events? If so, make a note in reportFile.
     missing <- apsdf$ap[which( !(apsdf$ap %in% chartData$ap))]
-    missdf <- data.frame(missing, 0)
-    for(missingAP in missing){
-      con <- file(reportFile, "a")
-      cat(missingAP, as.character(Sys.time()), "\n", file = con, append = TRUE)
-      close(con)
+    if(length(missing) != 0){
+      missdf <- data.frame(missing, 0)
+      for(missingAP in missing){
+        con <- file(reportFile, "a")
+        cat(missingAP, as.character(Sys.time()), "\n", file = con, append = TRUE)
+        close(con)
+      }
+      names(missdf) <- names(chartData)
+      chartData <- rbind(chartData, missdf)
     }
-    names(missdf) <- names(chartData)
-    chartData <- rbind(chartData, missdf)
     
     # If there are 10 or fewer events, display 0 events. (Don't want to point out where people may be sitting alone).
     chartData$Utilization <- chartData$`n()` * as.numeric((chartData$`n()` > threshold))
