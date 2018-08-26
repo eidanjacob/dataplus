@@ -122,14 +122,16 @@ server <- function(input, output){
     
     # Are there access points with no events? If so, make a note in reportFile.
     missing <- apsdf$ap[which( !(apsdf$ap %in% chartData$ap))]
-    missdf <- data.frame(missing, 0)
-    for(missingAP in missing){
-      con <- file(reportFile, "a")
-      cat(missingAP, as.character(Sys.time()), "\n", file = con, append = TRUE)
-      close(con)
+    if(length(missing) != 0){
+      missdf <- data.frame(missing, 0)
+      for(missingAP in missing){
+        con <- file(reportFile, "a")
+        cat(missingAP, as.character(Sys.time()), "\n", file = con, append = TRUE)
+        close(con)
+      }
+      names(missdf) <- names(chartData)
+      chartData <- rbind(chartData, missdf)
     }
-    names(missdf) <- names(chartData)
-    chartData <- rbind(chartData, missdf)
     
     # If there are 10 or fewer events, display 0 events. (Don't want to point out where people may be sitting alone).
     chartData$Utilization <- chartData$`n()` * as.numeric((chartData$`n()` > threshold))
