@@ -1,4 +1,6 @@
 # singleFileFromTo Take Two
+# Note that as of 9/13/18 there are some errors with how findIndex works.
+# The fixed version will be uploaded likely in a few days.
 
 # Load packages:
 # readr for data frame input
@@ -24,7 +26,6 @@ library(rgeos)
 library(raster)
 library(data.table) 
 library(ggplot2)
-library(igraph)
 
 # coord <- read_csv("locationsToCoordinates.csv") # for location data
 # df0419 <- read_csv("mergedData0419.csv") # dataset we are using
@@ -38,9 +39,11 @@ tLoc <- NULL
 
 # Functions
 #################
-# returns dataframe with columns
-# macaddr, id, fromLoc, totalTime, startTime, and endTime
-# where total time is how long the mac spent at the location
+# Returns dataframe with columns
+# macaddr, id, fromLoc, totalTime, startTime, and endTime,
+# where total time is how long the mac spent at the location.
+# Requires macdf to have columns called
+# macaddr and fromLoc.
 howLong <- function(macdf) {
   macdf <- macdf %>% # creating column with index that changes when location changes
     group_by(macaddr) %>% 
@@ -56,25 +59,25 @@ howLong <- function(macdf) {
 # Returns a list of two things
 # 1. Original dataframe filtered down to relevant info
 # 2. Truncated dataframe filtered to qualifying locations
+# Requires macdf to have columns called
+# macaddr and fromLoc.
 findIndex <- function(macdf, fLoc, tLoc, 
                       fromInte = 60 * 5, toInte = 60 * 5, 
-                      betweenInte = 60 * 10, distInte = 2) {
+                      betweenInte = 60 * 10, distInte = 1) {
   orig <- macdf # saving original dataframe
   macdf <- howLong(macdf)
   # filter dataframe based on parameters
   # e.g. whether the macaddr stayed in a location for the correct amount of time
   macdf <- macdf %>% mutate(doesQualify = (fromLoc == fLoc & totalTime > fromInte) | 
-                              (fromLoc == toLoc & totalTime > toInte) |
+                              (fromLoc == tLoc & totalTime > toInte) |
                               (!fromLoc %in% c(fLoc, tLoc) & totalTime > betweenInte))
   macdf <- macdf[macdf$doesQualify, ]
   
   macdf <- macdf[!is.na(macdf$doesQualify), ] # getting rid of NA
   
-  # finding relevant path from A to B
+  # finding relevant path from fLoc to tLoc
   macs <- unique(macdf$macaddr)
-  ret <- NULL
-  ret2 <- NULL
-  sapply(macs, function(mac) {
+  returnPaths <- sapply(macs, function(mac) {
     macLoc <- macdf %>% 
       filter(macaddr == mac)
     orig <- orig %>% 
@@ -98,7 +101,7 @@ findIndex <- function(macdf, fLoc, tLoc,
         }
         break
       }
-      indexTo <- match(toLoc, macLoc[indexTo+1:length(macLoc), ]$fromLoc) + indexTo
+      indexTo <- match(tLoc, macLoc[indexTo+1:length(macLoc), ]$fromLoc) + indexTo
     }
     # macaddr does not visit locations correctly
     if(is.na(indexTo) | is.na(indexFrom)) {
@@ -107,18 +110,19 @@ findIndex <- function(macdf, fLoc, tLoc,
     
     indexFrom2 <- match(macLoc$startTime[indexFrom], orig$`_time`)
     indexTo2 <- match(macLoc$startTime[indexTo], orig$`_time`)
-    ret <<- rbind(ret, orig[indexFrom2:indexTo2, ])
-    ret2 <<- rbind(ret2, macLoc[indexFrom:indexTo, ])
-    return(NULL)
+    orig <- orig[indexFrom2:indexTo2, ]
+    trun <- macLoc[indexFrom:indexTo, ]
+    return(list(orig = orig, trun = trun))
   })
-  return(list(orig = ret, trun = ret2))
+  returnPaths <- returnPaths[!sapply(returnPaths, is.null)] # remove null values
+  return(returnPaths)
 }
 # This function takes in the same parameters as findIndex, but instead it calls findIndex and returns three things.
 # 1. The original return of findIndex - for debugging purposes.
 # 2. The most popular complete paths.
 # 3. The most popular, single location to location paths.
 # This is useful when one wants to visualize several different paths from different locations.
-# The dataframe, macdf, has 19 parameters.
+# The dataframe, macdf, originally has 19 column names, but only columns macaddr and fromLoc should be required,
 # prefix, ap, _time, asa_code, macaddr, slotnum, ssid, ipaddr, location.x, fromLoc, lat, long, campus, APname, APnum, org, toLoc, nextTime, timeDiff
 # fromLoc - location.y from mergedData
 # toLoc - next location visited by that macaddr
@@ -130,54 +134,50 @@ findPaths <- function(macdf, fLoc, tLoc,
   findI <- findIndex(macdf, fLoc, tLoc, 
                      fromInte, toInte, 
                      betweenInte, distInte)
-  dfLocs <- findI$orig
   
-  # Condensing for better pathing
-  paths <- dfLocs %>% 
-    group_by(macaddr) %>% 
-    mutate(id = rleid(fromLoc))
-  paths <- paths %>% # summing up the amount of time spent at a location
-    group_by(macaddr, id, fromLoc) %>% 
-    summarise(totalTime = sum(timeDiff)) 
-  paths <- paths %>% 
-    group_by(macaddr) %>% 
-    mutate(toLoc = lead(fromLoc, order_by = macaddr))
-  
-  # Most common A -> B paths, that is, the full path rather than just the most popular destinations
-  # E.g. shows A to C to D to B rather than
-  # A to C, then C to D, then D to B, the latter of which is a "location to location" path
-  macs <- unique(paths$macaddr)
-  fullPaths <- list(path = NULL, count = NULL)
-  # Count the frequencies of certain paths
-  sink("NUL") # suppress output
-  sapply(macs, function(mac) { 
+  # Binning multiple events of a single location into one
+  # E.g. three Kilgo ap events gets binned to just one event
+  # Returns the full path as a string separated by ", "
+  fullPaths <- sapply(findI, function(mac) {
+    path <- mac$orig
+    path <- path %>% 
+      mutate(id = rleid(fromLoc)) %>% 
+      group_by(id, fromLoc) %>%
+      summarise(totalTime = sum(timeDiff)) # total time stayed at a location before moving on
     
-    macLoc <- paths %>%
-      filter(macaddr == mac)
-    path <- toString(paste0(macLoc$fromLoc))
-    if(!path %in% fullPaths$path) { # path is not in paths list
-      fullPaths$path <<- c(fullPaths$path, path) # add to list and initialize count
-      fullPaths$count <<- c(fullPaths$count, 0)
-    }
-    index <- match(path, fullPaths$path)
-    fullPaths$count[index] <<- fullPaths$count[index] + 1 # increment by one
+    return(toString(paste0(path$fromLoc)))
+  })
+  
+  # Grabbing the most common (full) paths
+  fullPaths <- as.data.frame(fullPaths) %>% 
+    group_by(fullPaths) %>% 
+    summarise(freq = n()) %>% 
+    arrange(desc(freq))
+  
+  # Grabbing the most common A->B jumps
+  subPaths <- NULL
+  sink("NUL") # suppress output
+  sapply(findI, function(mac) {
+    path <- mac$orig
+    path <- path %>% 
+      group_by(fromLoc, toLoc) %>% 
+      summarise(freq = n())
+    
+    subPaths <<- rbind(subPaths, path)
+    return(NULL)
   })
   sink()
   
-  fullPaths <- as.data.frame(fullPaths)
-  fullPaths <- fullPaths %>%   
-    arrange(desc(count))
-  
-  # Most common location to location paths
-  paths <- paths %>% 
+  # Find most common A->B jumps and sorting accordingly
+  subPaths <- subPaths %>% 
     group_by(fromLoc, toLoc) %>% 
     summarise(freq = n()) %>% 
     arrange(desc(freq))
-  paths <- paths[!is.na(paths$toLoc), ]
   
-  ret <- list(orig = findI, allPaths = fullPaths, subPaths = paths)
+  # Removing A->A events
+  subPaths <- subPaths[sapply(1:nrow(subPaths), function(i) {subPaths$fromLoc[i] != subPaths$toLoc[i]}),]
   
-  return(ret)
+  return(list(orig = findI, fullPaths = fullPaths, subPaths = subPaths))
 }
 #################
 
@@ -226,28 +226,14 @@ ui <- fluidPage(
       mainPanel(
          tabsetPanel(type = "tabs", 
                      tabPanel("Map", leafletOutput("map", height = 850)),
-                     tabPanel("Table", tableOutput("table")),
-                     tabPanel("Graph", plotOutput("graph")))
+                     tabPanel("Table", tableOutput("table")))
       )
    )
 )
 
 server <- function(input, output, session) {
   
-  # Filter dataframe based on selected orgs
-  observe({
-    withProgress({
-    dflocs <<- df0419 %>% 
-      group_by(macaddr) %>% 
-      mutate(toAP = lead(ap, order_by = macaddr),
-             toLoc = lead(location.y, order_by = macaddr),
-             nextTime = lead(`_time`, order_by = macaddr),
-             timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>% 
-      rename(fromAP = ap,
-             fromLoc = location.y)
-    })
-  })
-  
+
   observeEvent(input$submitLocs, {
     fLoc <<- input$fromLoc
     tLoc <<- input$toLoc
@@ -257,25 +243,34 @@ server <- function(input, output, session) {
     withProgress({
     # Filter for macs that have visited both locations to speed up runtimes
     if(fLoc != "" & tLoc != ""){
-      bothMacs <- unique((dflocs %>%
+      bothMacs <- unique((df0419 %>%
                             filter(fromLoc %in% c(fLoc,tLoc)))$macaddr)
-      dflocs <- dflocs %>% 
+      dflocs <- df0419 %>%
         filter(macaddr %in% bothMacs[1:400]) # notice it only filters for a portion
     }
     incProgress()
-    
-    
-    dfap <- dflocs %>% 
+
+    # Creating new columns 
+    dflocs <<- dflocs %>%
+      group_by(macaddr) %>%
+      mutate(toAP = lead(ap, order_by = macaddr),
+             toLoc = lead(location.y, order_by = macaddr),
+             nextTime = lead(`_time`, order_by = macaddr),
+             timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>%
+      rename(fromAP = ap,
+             fromLoc = location.y)
+
+    dfap <- dflocs %>%
       group_by(fromAP, toAP, fromLoc, toLoc) %>%
-      summarise(freq = n()) %>% 
+      summarise(freq = n()) %>%
       arrange(desc(freq))
-    
+
     incProgress()
-    
+
     # Finding viable paths
     temp <- findPaths(dflocs, fLoc, tLoc)
-    paths <- temp$subPaths
-    fullP <- temp$allPaths
+    paths <- temp$subPaths # A->B paths
+    fullP <- temp$fullPaths # full fLoc->tLoc paths
     
     incProgress()
     
@@ -295,12 +290,12 @@ server <- function(input, output, session) {
     # here, we are splitting the strings the paths are stored as in order
     # to bin them accordingly and attach appropriate colors to their 
     # frequencies
-    splitPaths <- sapply(as.character(temp$allPaths$path), strsplit, split = ", ")
+    splitPaths <- sapply(as.character(fullP$fullPaths), strsplit, split = ", ")
     # Matching paths to their coordinates
     pathsToCoords <- NULL
     for(i in 1:length(splitPaths)) {
-      indivLocs <- data.frame(location = splitPaths[[i]], count = temp$allPaths$count[[i]], index = i) # index for grouping lines
-      pathsToCoords <- merge.data.frame(indivLocs, coord)
+      indivLocs <- data.frame(location = splitPaths[[i]], count = fullP$freq[[i]], index = i) # index for grouping lines
+      pathsToCoords <- merge.data.frame(indivLocs, coord, sort = FALSE)
       
       # Creating labels
       labels <- sprintf("%s <br/ >%g",
@@ -323,39 +318,13 @@ server <- function(input, output, session) {
                        bringToFront = TRUE))
     }
     
-    
-      
-    
-    
-    
     incProgress()
     
     # Viewing map
-    
     output$map <- renderLeaflet(m)
     
-    # Viewing graph
-    coordTrun <- coord %>% # getting rid of vertices that don't appear on graph
-      filter(location %in% c(paths$fromLoc, paths$toLoc))
-    coordMx <- as.matrix(coordTrun[, 3:2]) # placing vertices on geographic location
-    g <- graph.data.frame(paths, directed = TRUE, vertices = coordTrun)
-    E(g)$width <- sqrt(paths$freq) # wider == more frequent; sqrt size for easy viewings
-
-    output$graph <- renderPlot(plot(g,
-                                    layout = coordMx,
-                                    edge.arrow.size = 0.15,
-                                    vertex.size = 1,
-                                    vertex.label.dist = 1,
-                                    vertex.color = "darkblue",
-                                    edge.color = "violet",
-                                    vertex.label.cex = 0.75,
-                                    vertex.label.family = "Helvetica",
-                                    vertex.label.font = 2
-                                    #main = paste("From", fl[i], "to", tl[i])
-                                    ))
-    
-    
-    output$table <- renderDataTable(paths) # Create table
+    # Create table
+    output$table <- renderDataTable(paths) 
     
     })
     
