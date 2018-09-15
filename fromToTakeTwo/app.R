@@ -1,5 +1,5 @@
 # singleFileFromTo Take Two
-# Note that as of 9/13/18 there are some errors with how findIndex works.
+# Note that as of 9/15/18 there are some errors with how findIndex works.
 # The fixed version will be uploaded likely in a few days.
 
 # Load packages:
@@ -27,15 +27,38 @@ library(raster)
 library(data.table) 
 library(ggplot2)
 
-# coord <- read_csv("locationsToCoordinates.csv") # for location data
-# df0419 <- read_csv("mergedData0419.csv") # dataset we are using
-df0419 <- df0419 %>% # reorder data frame
-  arrange(`_time`, macaddr)
 # Global variables
-dflocs <- NULL
+#################
+# Variables for filtering
 fLoc <- NULL
 tLoc <- NULL
+num.macs <- 200 # number of macs to filter through
+dir <- "./data/" # what directory the data is in
+data.fname <- "mergedData.csv" # name of data file
+coord.fname <- "locationsToCoordinates.csv" # name of locations to coordinates file
 
+# Variables for Time Step Selection
+start.time <- min(df0419$`_time`)
+end.time <- max(df0419$`_time`)
+delay <- 2700 # in ms
+step <- 60 * 1 # in seconds
+
+# Default coordinates that provide overview of entire campus
+defLong <- -78.9272544 # default longitude
+defLati <- 36.0042458 # default latitude
+zm <- 15 # default zoom level
+
+# Colors for mapping
+fromCirc <- "red" # from circle
+toCirc <- "blue" # to circle
+colorL <- "Blues" # color palette for lines
+
+# Data sets for mapping
+# coord <- read_csv(coord.fname) # for location data
+# df0419 <- read_csv(paste0(dir,data.fname)) # dataset we are using
+df0419 <- df0419 %>% # reorder data frame
+  arrange(`_time`, macaddr)
+#################
 
 # Functions
 #################
@@ -61,12 +84,30 @@ howLong <- function(macdf) {
 # 2. Truncated dataframe filtered to qualifying locations
 # Requires macdf to have columns called
 # macaddr and fromLoc.
+# If the parameter full = TRUE, then it will return all paths, regardless of 
+# beginning or destination. In the future, we could plot the paths such that
+# each location that was stayed at for longer than some specified time
+# would have some sort of indicator.
 findIndex <- function(macdf, fLoc, tLoc, 
                       fromInte = 60 * 5, toInte = 60 * 5, 
-                      betweenInte = 60 * 10, distInte = 1) {
+                      betweenInte = 60 * 10, distInte = 1, full = FALSE) {
   orig <- macdf # saving original dataframe
   macdf <- howLong(macdf)
-  # filter dataframe based on parameters
+  
+  # If we only carry about the entire path, then return the whole thing
+  if(full) {
+    macs <- unique(macdf$macaddr)
+    returnPaths <- lapply(macs, function(mac) {
+      macLoc <- macdf %>% 
+        filter(macaddr == mac)
+      orig <- orig %>% 
+        filter(macaddr == mac)
+      return(list(orig = orig, trun = macLoc))
+    })
+    return(returnPaths)
+  }
+  
+  # Filter dataframe based on parameters
   # e.g. whether the macaddr stayed in a location for the correct amount of time
   macdf <- macdf %>% mutate(doesQualify = (fromLoc == fLoc & totalTime > fromInte) | 
                               (fromLoc == tLoc & totalTime > toInte) |
@@ -75,7 +116,7 @@ findIndex <- function(macdf, fLoc, tLoc,
   
   macdf <- macdf[!is.na(macdf$doesQualify), ] # getting rid of NA
   
-  # finding relevant path from fLoc to tLoc
+  # Finding relevant path from fLoc to tLoc
   macs <- unique(macdf$macaddr)
   returnPaths <- sapply(macs, function(mac) {
     macLoc <- macdf %>% 
@@ -130,10 +171,15 @@ findIndex <- function(macdf, fLoc, tLoc,
 # timeDiff - nextTime minus _time
 findPaths <- function(macdf, fLoc, tLoc, 
                       fromInte = 60 * 5, toInte = 60 * 5, 
-                      betweenInte = 60 * 10, distInte = 1) {
+                      betweenInte = 60 * 10, distInte = 1, full = FALSE) {
   findI <- findIndex(macdf, fLoc, tLoc, 
                      fromInte, toInte, 
-                     betweenInte, distInte)
+                     betweenInte, distInte, full)
+  
+  # Checking to see if any viable paths were found
+  if(length(findI) == 0) { # none were found
+    return(NULL)
+  }
   
   # Binning multiple events of a single location into one
   # E.g. three Kilgo ap events gets binned to just one event
@@ -181,7 +227,8 @@ findPaths <- function(macdf, fLoc, tLoc,
 }
 #################
 
-# Creating adjacency table
+# Creating location polygons
+#################
 # calculating voronoi cells and converting to polygons to plot on map
 z <- deldir(coord$long, coord$lat) # computes cells
 # convert cell info to spatial data frame (polygons)
@@ -203,8 +250,7 @@ a <- sapply(1:length(coord$location), function(x){
   SPDF@polygons[[x]]@ID <- coord$location[x]
   SPDF <<- SPDF
 })
-adjTable <- gTouches(SPDF, byid = TRUE)
-
+#################
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
@@ -215,9 +261,11 @@ ui <- fluidPage(
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
      sidebarPanel(
+       uiOutput("ui"),
        textInput("fromLoc", "From Location", value = "Perkins"),
        textInput("toLoc", "To Location", value = "WestUnion"),
        actionButton("submitLocs", "Submit Locations"),
+       checkboxInput("full", "View all paths"),
        p(),
        actionButton("calculate", "Calculate Paths")
      ),
@@ -233,7 +281,34 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
+  output$ui <- renderUI({
+    # input a time to show temporally close records on map
+    sliderInput("time", "Time", min = start.time, max = end.time,
+                value = c(start.time, end.time), animate = animationOptions(interval=delay),
+                step = step)
+  })
+  
+  # Creating labels that appear when you click on a polygon
+  polyLabels <- sprintf("%s",
+                        coord$location) %>% 
+    lapply(htmltools::HTML)
+  
+  # Creating map
+  output$map <- renderLeaflet({
+    leaflet() %>%
+      setView("map", lng = defLong, lat = defLati, zoom = zm) %>% # sets initial map zoom & center
+      addProviderTiles(providers$OpenStreetMap.BlackAndWhite) %>% 
+      addPolygons(data = SPDF, 
+                  layerId = coord$location,
+                  group = coord$location,
+                  popup = polyLabels,
+                  weight = 1,
+                  color = "gray81",
+                  fillOpacity = 0.2,
+                  fillColor = "azure")
+  })
 
+  # Submit locations is pressed
   observeEvent(input$submitLocs, {
     fLoc <<- input$fromLoc
     tLoc <<- input$toLoc
@@ -241,96 +316,109 @@ server <- function(input, output, session) {
   
   observeEvent(input$calculate,{
     withProgress({
-    # Filter for macs that have visited both locations to speed up runtimes
-    if(fLoc != "" & tLoc != ""){
-      bothMacs <- unique((df0419 %>%
-                            filter(fromLoc %in% c(fLoc,tLoc)))$macaddr)
-      dflocs <- df0419 %>%
-        filter(macaddr %in% bothMacs[1:400]) # notice it only filters for a portion
-    }
-    incProgress()
-
-    # Creating new columns 
-    dflocs <<- dflocs %>%
-      group_by(macaddr) %>%
-      mutate(toAP = lead(ap, order_by = macaddr),
-             toLoc = lead(location.y, order_by = macaddr),
-             nextTime = lead(`_time`, order_by = macaddr),
-             timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>%
-      rename(fromAP = ap,
-             fromLoc = location.y)
-
-    dfap <- dflocs %>%
-      group_by(fromAP, toAP, fromLoc, toLoc) %>%
-      summarise(freq = n()) %>%
-      arrange(desc(freq))
-
-    incProgress()
-
-    # Finding viable paths
-    temp <- findPaths(dflocs, fLoc, tLoc)
-    paths <- temp$subPaths # A->B paths
-    fullP <- temp$fullPaths # full fLoc->tLoc paths
-    
-    incProgress()
-    
-    # Creating map
-    m <- leaflet() %>%
-      setView("map", lng = defLong, lat = defLati, zoom = zm) %>% # sets initial map zoom & center
-      addProviderTiles(providers$OpenStreetMap.BlackAndWhite) %>% 
-      addPolygons(data = SPDF, 
-                  layerId = coord$location,
-                  group = coord$location,
-                  weight = 1,
-                  color = "gray81",
-                  fillOpacity = 0.2,
-                  fillColor = "azure") 
-    
-    # The paths are in order from most common to least common,
-    # here, we are splitting the strings the paths are stored as in order
-    # to bin them accordingly and attach appropriate colors to their 
-    # frequencies
-    splitPaths <- sapply(as.character(fullP$fullPaths), strsplit, split = ", ")
-    # Matching paths to their coordinates
-    pathsToCoords <- NULL
-    for(i in 1:length(splitPaths)) {
-      indivLocs <- data.frame(location = splitPaths[[i]], count = fullP$freq[[i]], index = i) # index for grouping lines
-      pathsToCoords <- merge.data.frame(indivLocs, coord, sort = FALSE)
+      # Clear map
+      leafletProxy("map") %>% 
+        clearGroup("lines")
       
-      # Creating labels
-      labels <- sprintf("%s <br/ >%g",
-                        toString(splitPaths[[i]]),
-                        indivLocs$count[[1]]) %>% # plotted value - note to self: use temp$allPaths$path[i] instead
-        lapply(htmltools::HTML)
+      # Check to see if we want to see all possible paths
+      if(input$full) {
+        bothMacs <- unique(df0419$macaddr)
+        dflocs <- df0419 %>% 
+          filter(macaddr %in% bothMacs[1:num.macs]) # notice it only filters for a portion
+      } else {
+        # Filter for macs that have visited the desired locations to speed up runtimes
+        bothMacs <- unique((df0419 %>%
+                              filter(location %in% c(fLoc,tLoc)))$macaddr)
+        dflocs <- df0419 %>%
+          filter(macaddr %in% bothMacs[1:num.macs]) # notice it only filters for a portion
+      }
       
-      # Adding lines
-      m <- m %>% 
-        addPolylines(lng = pathsToCoords$long, 
-                     lat = pathsToCoords$lat, 
-                     layerId = pathsToCoords$index,
-                     weight = pathsToCoords$count,
-                     label = labels,
-                     opacity = 0.5, 
-                     highlightOptions = highlightOptions(
-                       weight = 5,
-                       color = "red",
-                       fillOpacity = 1,
-                       bringToFront = TRUE))
-    }
-    
-    incProgress()
-    
-    # Viewing map
-    output$map <- renderLeaflet(m)
-    
-    # Create table
-    output$table <- renderDataTable(paths) 
-    
+      # Filtering for events within time step selected
+      dflocs <- dflocs %>% 
+        filter(`_time` %within% interval(input$time[[1]], input$time[[2]])) 
+      
+      # Creating new columns
+      dflocs <- dflocs %>%
+        group_by(macaddr) %>%
+        mutate(toAP = lead(ap, order_by = macaddr),
+               toLoc = lead(location, order_by = macaddr),
+               nextTime = lead(`_time`, order_by = macaddr),
+               timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>%
+        rename(fromAP = ap,
+               fromLoc = location)
+      
+      # Creating datatable of most common ap to ap jumps
+      dfap <<- dflocs %>%
+        group_by(fromAP, toAP, fromLoc, toLoc) %>%
+        summarise(freq = n()) %>%
+        arrange(desc(freq))
+      
+      incProgress()
+      
+      # Finding viable paths
+      temp <- findPaths(dflocs, fLoc, tLoc, full = input$full)
+      if(is.null(temp)) { # no viable paths were found
+        return()
+      }
+      
+      fullP <- temp$fullPaths # full fLoc->tLoc paths
+      
+      incProgress()
+      
+      # The paths are in order from most common to least common,
+      # here, we are splitting the strings the paths are stored as in order
+      # to bin them accordingly and attach appropriate colors to their 
+      # frequencies
+      splitPaths <- sapply(as.character(fullP$fullPaths), strsplit, split = ", ")
+      colorPal <- colorNumeric(colorL, fullP$freq)
+      pathsToCoords <- NULL
+      for(i in 1:length(splitPaths)) {
+        # Matching paths to their coordinates and counts
+        indivLocs <- data.frame(location = splitPaths[[i]], count = fullP$freq[[i]], index = i) # index for grouping lines
+        pathsToCoords <- merge.data.frame(indivLocs, coord, sort = FALSE)
+        
+        # Creating labels
+        lineLabels <- sprintf("%s <br/ >%g",
+                          toString(splitPaths[[i]]), # the path
+                          indivLocs$count[[1]]) %>% # how many macs went that path
+          lapply(htmltools::HTML)
+        
+        # Adding lines
+        leafletProxy("map") %>%
+          addPolylines(lng = pathsToCoords$long, 
+                       lat = pathsToCoords$lat, 
+                       layerId = pathsToCoords$index,
+                       group = "lines",
+                       weight = pathsToCoords$count,
+                       label = lineLabels,
+                       opacity = 0.5, 
+                       color = colorPal(pathsToCoords$count),
+                       highlightOptions = highlightOptions(
+                         weight = pathsToCoords$count,
+                         color = "red",
+                         fillOpacity = 1,
+                         bringToFront = TRUE))
+        
+        # Add circles to indicate fLoc and tLoc
+        if(tLoc == "" | fLoc == "") {
+          leafletProxy("map") %>% 
+            addCircles(lng = pathsToCoords$long[[1]],
+                       lat = pathsToCoords$lat[[1]], 
+                       radius = 5,
+                       weight = 2,
+                       opacity = 0.1,
+                       color = fromCirc) %>% 
+            addCircles(lng = pathsToCoords$long[[length(pathsToCoords$long)]],
+                       lat = pathsToCoords$lat[[length(pathsToCoords$long)]], 
+                       radius = 5,
+                       weight = 2,
+                       opacity = 0.1,
+                       color = toCirc)
+        }
+        
+      }
     })
-    
   })
-  
-  
   
 }
 
