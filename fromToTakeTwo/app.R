@@ -30,9 +30,10 @@ library(ggplot2)
 # Global variables
 #################
 # Variables for filtering
-fLoc <- NULL
-tLoc <- NULL
-num.macs <- 200 # number of macs to filter through
+dfap <- NULL 
+fLoc <- ""
+tLoc <- ""
+num.macs <- 200 # default number of macs to filter through
 dir <- "./data/" # what directory the data is in
 data.fname <- "mergedData.csv" # name of data file
 coord.fname <- "locationsToCoordinates.csv" # name of locations to coordinates file
@@ -41,7 +42,7 @@ coord.fname <- "locationsToCoordinates.csv" # name of locations to coordinates f
 start.time <- min(df0419$`_time`)
 end.time <- max(df0419$`_time`)
 delay <- 2700 # in ms
-step <- 60 * 1 # in seconds
+step <- 3600 * 1 # in seconds
 
 # Default coordinates that provide overview of entire campus
 defLong <- -78.9272544 # default longitude
@@ -51,7 +52,7 @@ zm <- 15 # default zoom level
 # Colors for mapping
 fromCirc <- "red" # from circle
 toCirc <- "blue" # to circle
-colorL <- "Blues" # color palette for lines
+colorL <- "YlOrRd" # color palette for lines
 
 # Data sets for mapping
 # coord <- read_csv(coord.fname) # for location data
@@ -252,29 +253,34 @@ a <- sapply(1:length(coord$location), function(x){
 })
 #################
 
-# Define UI for application that draws a histogram
+# Define UI 
 ui <- fluidPage(
    
    # Application title
    titlePanel("Duke Wireless Data - Path Visualization"),
    
-   # Sidebar with a slider input for number of bins 
+   # Sidebar with inputs
    sidebarLayout(
      sidebarPanel(
        uiOutput("ui"),
-       textInput("fromLoc", "From Location", value = "Perkins"),
-       textInput("toLoc", "To Location", value = "WestUnion"),
+       textInput("fromLoc", "From Location", value = fLoc),
+       textInput("toLoc", "To Location", value = tLoc),
        actionButton("submitLocs", "Submit Locations"),
+       br(),
+       numericInput("numMacs", "Number of macs to check", value = num.macs, min = 100, max = length(unique(df0419$macaddrs))),
+       actionButton("submitMacs", "Submit Macs"),
        checkboxInput("full", "View all paths"),
        p(),
-       actionButton("calculate", "Calculate Paths")
+       actionButton("calculate", "Calculate Paths"),
+       p(),
+       textOutput("submittedInfo")
      ),
       
-      # Show a plot of the generated distribution
+      # Show a map
       mainPanel(
          tabsetPanel(type = "tabs", 
                      tabPanel("Map", leafletOutput("map", height = 850)),
-                     tabPanel("Table", tableOutput("table")))
+                     tabPanel("Table", dataTableOutput("table")))
       )
    )
 )
@@ -282,7 +288,7 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   output$ui <- renderUI({
-    # input a time to show temporally close records on map
+    # Input a time to show temporally close records on map
     sliderInput("time", "Time", min = start.time, max = end.time,
                 value = c(start.time, end.time), animate = animationOptions(interval=delay),
                 step = step)
@@ -312,6 +318,11 @@ server <- function(input, output, session) {
   observeEvent(input$submitLocs, {
     fLoc <<- input$fromLoc
     tLoc <<- input$toLoc
+  })
+  
+  # Submit macs is pressed
+  observeEvent(input$submitMacs, {
+    num.macs <<- input$numMacs
   })
   
   observeEvent(input$calculate,{
@@ -347,9 +358,20 @@ server <- function(input, output, session) {
         rename(fromAP = ap,
                fromLoc = location)
       
-      # Creating datatable of most common ap to ap jumps
-      dfap <<- dflocs %>%
-        group_by(fromAP, toAP, fromLoc, toLoc) %>%
+      # Creating datatable of most common ap to ap jumps with accounting for macs -- that is, 10 events to the same AP in a row is counted as 1
+      # Code below is from howLong but replaced fromLoc->fromAP
+      dfap <<- dflocs %>% # creating column with index that changes when location changes
+        group_by(macaddr) %>% 
+        mutate(id = rleid(fromAP))
+      dfap <<- dfap %>% # summing up the amount of time spent at an ap
+        group_by(macaddr, id, fromAP) %>% 
+        summarise(totalTime = sum(timeDiff), 
+                  startTime = min(`_time`), 
+                  endTime = max(`_time`)) %>% 
+        group_by(macaddr) %>% 
+        mutate(toAP = lead(fromAP, order_by = macaddr)) # create toAP column
+      dfap <<- dfap %>% # find most common ap to ap jumps
+        group_by(fromAP, toAP, fromAP, toAP) %>%
         summarise(freq = n()) %>%
         arrange(desc(freq))
       
@@ -362,15 +384,71 @@ server <- function(input, output, session) {
       }
       
       fullP <- temp$fullPaths # full fLoc->tLoc paths
+      subP <- temp$subPaths # A->B paths
       
       incProgress()
+      
+      # If we want to visualize all paths, then we only plot 
+      # the single location to location paths since it gives more information
+      if(input$full) {
+        subP <- subP[!is.na(subP$freq), ] # get rid of na
+        subP <- subP %>% # small->big for better plots
+          arrange(freq)
+        # Getting location coordinates
+        subP <- merge.data.frame(subP, coord, by.x = "fromLoc", by.y = "location", sort = FALSE)
+        subP <- merge.data.frame(subP, coord, by.x = "toLoc", by.y = "location", sort = FALSE)
+        subP <- subP[!subP$freq == 1, ] # get rid of paths with only one mac taking it
+        subP <- subP[subP$fromLoc != subP$toLoc, ] # get rid of A->A paths
+        
+        # Making color palette
+        colorPal <- colorBin(colorL, subP$freq)
+        
+        sapply(1:nrow(subP), function(i) { # plot each path
+          # Creating labels
+          lineLabels <- sprintf("%s <br/ >%g",
+                                toString(c(subP$fromLoc[[i]], subP$toLoc[[i]])), # the path
+                                subP$freq[[i]]) %>% # how many macs went that path
+            lapply(htmltools::HTML)
+          
+          # Adding lines
+          leafletProxy("map") %>%
+            addPolylines(lng = c(subP$long.x[[i]], subP$long.y[[i]]), 
+                         lat = c(subP$lat.x[[i]], subP$lat.y[[i]]), 
+                         layerId = i,
+                         group = "lines",
+                         weight = 3,
+                         label = lineLabels,
+                         opacity = 0.5, 
+                         color = colorPal(subP$freq[[i]]),
+                         highlightOptions = highlightOptions(
+                           weight = 3,
+                           color = "red",
+                           fillOpacity = 1,
+                           bringToFront = TRUE)) %>% 
+            addCircles(lng = subP$long.x[[i]],
+                       lat = subP$lat.x[[i]], 
+                       radius = 5,
+                       weight = 2,
+                       opacity = 0.1,
+                       color = fromCirc) %>% 
+            addCircles(lng = subP$long.y[[i]],
+                       lat = subP$lat.y[[i]], 
+                       radius = 5,
+                       weight = 2,
+                       opacity = 0.1,
+                       color = toCirc)
+        })
+        return()
+      }
       
       # The paths are in order from most common to least common,
       # here, we are splitting the strings the paths are stored as in order
       # to bin them accordingly and attach appropriate colors to their 
       # frequencies
+      fullP <- fullP %>% # small->big for better plots
+        arrange(freq)
       splitPaths <- sapply(as.character(fullP$fullPaths), strsplit, split = ", ")
-      colorPal <- colorNumeric(colorL, fullP$freq)
+      colorPal <- colorBin(colorL, fullP$freq)
       pathsToCoords <- NULL
       for(i in 1:length(splitPaths)) {
         # Matching paths to their coordinates and counts
@@ -420,6 +498,17 @@ server <- function(input, output, session) {
     })
   })
   
+  output$table <- renderDataTable(dfap) # display table
+  
+  # observe({
+  #   input$calculate
+  #   output$submittedInfo <- renderText(paste0("Submitted with ", # display info about map
+  #                                             num.macs, 
+  #                                             " macs and ", 
+  #                                             fLoc, 
+  #                                             "->", 
+  #                                             tLoc)) 
+  # }, priority = -1)
 }
 
 # Run the application 
