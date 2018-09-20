@@ -1,6 +1,4 @@
 # singleFileFromTo Take Two
-# Note that as of 9/15/18 there are some errors with how findIndex works.
-# The fixed version will be uploaded likely in a few days.
 
 # Load packages:
 # readr for data frame input
@@ -19,10 +17,10 @@ library(dplyr)
 library(shiny)
 library(deldir)
 library(sp)
-library(rgdal)
+# library(rgdal)
 library(lubridate)
 library(geosphere)
-library(rgeos)
+# library(rgeos)
 library(raster)
 library(data.table) 
 library(ggplot2)
@@ -37,12 +35,14 @@ num.macs <- 200 # default number of macs to filter through
 dir <- "./data/" # what directory the data is in
 data.fname <- "mergedData.csv" # name of data file
 coord.fname <- "locationsToCoordinates.csv" # name of locations to coordinates file
+n <- 25 # top what percent of frequencies to keep when plotting
 
 # Variables for Time Step Selection
 start.time <- min(df0419$`_time`)
 end.time <- max(df0419$`_time`)
 delay <- 2700 # in ms
-step <- 3600 * 1 # in seconds
+bin.time <- 3600 * 1 # in secs, how much time to bin by
+animated <- TRUE # whether we want to be able to view an animated map or not
 
 # Default coordinates that provide overview of entire campus
 defLong <- -78.9272544 # default longitude
@@ -59,6 +59,7 @@ colorL <- "YlOrRd" # color palette for lines
 # df0419 <- read_csv(paste0(dir,data.fname)) # dataset we are using
 df0419 <- df0419 %>% # reorder data frame
   arrange(`_time`, macaddr)
+# Note that df0419 is in UST, which is 4 hours ahead if we're in DST
 #################
 
 # Functions
@@ -110,9 +111,9 @@ findIndex <- function(macdf, fLoc, tLoc,
   
   # Filter dataframe based on parameters
   # e.g. whether the macaddr stayed in a location for the correct amount of time
-  macdf <- macdf %>% mutate(doesQualify = (fromLoc == fLoc & totalTime > fromInte) | 
-                              (fromLoc == tLoc & totalTime > toInte) |
-                              (!fromLoc %in% c(fLoc, tLoc) & totalTime > betweenInte))
+  macdf <- macdf %>% mutate(doesQualify = (fromLoc == fLoc & totalTime > fromInte) | # check if mac stayed in fromLoc correctly
+                              (fromLoc == tLoc & totalTime > toInte) | # check if mac stayed in toLoc correctly
+                              (!fromLoc %in% c(fLoc, tLoc) & totalTime > betweenInte)) # check if in between locs were stayed at correctly
   macdf <- macdf[macdf$doesQualify, ]
   
   macdf <- macdf[!is.na(macdf$doesQualify), ] # getting rid of NA
@@ -124,30 +125,57 @@ findIndex <- function(macdf, fLoc, tLoc,
       filter(macaddr == mac)
     orig <- orig %>% 
       filter(macaddr == mac)
-    
-    if(!fLoc %in% macLoc$fromLoc | !tLoc %in% macLoc$fromLoc) { # does not visit locations correctly
-      return(NULL)
-    }
-    # finding when device visited locations
-    indexFrom <- match(fLoc, macLoc$fromLoc)
-    indexTo <- match(tLoc, macLoc$fromLoc)
-    
-    while(!is.na(indexTo) & !is.na(indexFrom)) {
-      if(indexTo > indexFrom) {
-        # to minimize the distance between the two locations -- that is, for ex,
-        # to filter out if a device starts at perkins, chills in their room
-        # for two hours, goes on East, goes back to west, goes to WU.
-        if(indexTo - indexFrom > distInte) {
-          indexFrom <- match(fLoc, macLoc[indexFrom+1:length(macLoc), ]$fromLoc) + indexFrom
-          next
+    # Case that fLoc or tLoc is empty
+    if(fLoc == "" | tLoc == "") {
+      if(fLoc == "") {
+        indexTo <- match(tLoc, macLoc$fromLoc)
+        if(is.na(indexTo) | nrow(macLoc) == 1) {
+          return(NULL)
         }
-        break
+        if(indexTo == 1) { # need to check if the fromLoc is the first visited location -- bc this isn't a path
+          indexTo <- match(tLoc, macLoc$fromLoc[2:nrow(macLoc)]) + 1
+        }
+        if(is.na(indexTo)) {
+          return(NULL)
+        }
+        indexFrom <- 1
       }
-      indexTo <- match(tLoc, macLoc[indexTo+1:length(macLoc), ]$fromLoc) + indexTo
-    }
-    # macaddr does not visit locations correctly
-    if(is.na(indexTo) | is.na(indexFrom)) {
-      return(NULL)
+      if(tLoc == "") {
+        indexFrom <- match(fLoc, macLoc$fromLoc)
+        if(is.na(indexFrom)) {
+          return(NULL)
+        }
+        indexTo <- length(macLoc$fromLoc)
+      }
+      if(fLoc == "" & tLoc == "") {
+        indexFrom <- 1
+        indexTo <- length(macLoc$fromLoc)
+      }
+    } else { # neither are empty
+      if(!fLoc %in% macLoc$fromLoc | !tLoc %in% macLoc$fromLoc) { # does not visit locations correctly
+        return(NULL)
+      }
+      # finding when device visited locations
+      indexFrom <- match(fLoc, macLoc$fromLoc)
+      indexTo <- match(tLoc, macLoc$fromLoc)
+      
+      while(!is.na(indexTo) & !is.na(indexFrom)) {
+        if(indexTo > indexFrom) {
+          # to minimize the distance between the two locations -- that is, for ex,
+          # to filter out if a device starts at perkins, chills in their room
+          # for two hours, goes on East, goes back to west, goes to WU.
+          if(indexTo - indexFrom > distInte) {
+            indexFrom <- match(fLoc, macLoc[indexFrom+1:length(macLoc), ]$fromLoc) + indexFrom
+            next
+          }
+          break
+        }
+        indexTo <- match(tLoc, macLoc[indexTo+1:length(macLoc), ]$fromLoc) + indexTo
+      }
+      # macaddr does not visit locations correctly
+      if(is.na(indexTo) | is.na(indexFrom)) {
+        return(NULL)
+      }
     }
     
     indexFrom2 <- match(macLoc$startTime[indexFrom], orig$`_time`)
@@ -165,7 +193,8 @@ findIndex <- function(macdf, fLoc, tLoc,
 # 3. The most popular, single location to location paths.
 # This is useful when one wants to visualize several different paths from different locations.
 # The dataframe, macdf, originally has 19 column names, but only columns macaddr and fromLoc should be required,
-# prefix, ap, _time, asa_code, macaddr, slotnum, ssid, ipaddr, location.x, fromLoc, lat, long, campus, APname, APnum, org, toLoc, nextTime, timeDiff
+# prefix, ap, _time, asa_code, macaddr, slotnum, ssid, ipaddr, location.x, fromLoc, 
+# lat, long, campus, APname, APnum, org, toLoc, nextTime, timeDiff
 # fromLoc - location.y from mergedData
 # toLoc - next location visited by that macaddr
 # nextTime - the time of the next event registered by that macaddr
@@ -226,72 +255,165 @@ findPaths <- function(macdf, fLoc, tLoc,
   
   return(list(orig = findI, fullPaths = fullPaths, subPaths = subPaths))
 }
+# Copied as is from functions.R
+# Returns the macaddrs that move within the dataset during a time interval
+# df is newly cleaned splunk data
+doesMove <- function(df, inte = interval(min(df$`_time`), max(df$`_time`))) {
+  temp <- df %>% # counts how many times a mac visited a place
+    filter(`_time` %within% inte) %>% 
+    group_by(macaddr,location) %>% 
+    summarise(num = n())
+  temp <- temp %>% # counts how many different places a mac visited
+    group_by(macaddr) %>% 
+    summarise(num = n())
+  temp <- temp[which(temp$num != 1), ]
+  return(temp$macaddr)
+}
 #################
 
-# Creating location polygons
+# # Creating location polygons
+# #################
+# # calculating voronoi cells and converting to polygons to plot on map
+# z <- deldir(coord$long, coord$lat) # computes cells
+# # convert cell info to spatial data frame (polygons)
+# w <- tile.list(z)
+# polys <- vector(mode="list", length=length(w))
+# for (i in seq(along=polys)) {
+#   pcrds <- cbind(w[[i]]$x, w[[i]]$y)
+#   pcrds <- rbind(pcrds, pcrds[1,])
+#   polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
+# }
+# SP <- SpatialPolygons(polys)
+# for(x in 1:nrow(coord)){
+#   SP@polygons[[x]]@ID <- as.character(x)
+# }
+# SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
+# # tag polygons with location name
+# SPDF@data$ID = coord$location
+# a <- sapply(1:length(coord$location), function(x){
+#   SPDF@polygons[[x]]@ID <- coord$location[x]
+#   SPDF <<- SPDF
+# })
+# #################
+
+# If animated, bin population densities
 #################
-# calculating voronoi cells and converting to polygons to plot on map
-z <- deldir(coord$long, coord$lat) # computes cells
-# convert cell info to spatial data frame (polygons)
-w <- tile.list(z)
-polys <- vector(mode="list", length=length(w))
-for (i in seq(along=polys)) {
-  pcrds <- cbind(w[[i]]$x, w[[i]]$y)
-  pcrds <- rbind(pcrds, pcrds[1,])
-  polys[[i]] <- Polygons(list(Polygon(pcrds)), ID=as.character(i))
+if(animated) {
+  moveMacs <- doesMove(df0419)
+  df0419 <- df0419 %>% filter(macaddr %in% moveMacs)
+  dflocs <- df0419
+  set.seed(1000)
+  bothMacs <- sample(unique(dflocs$macaddr), num.macs)
+  dflocs <- dflocs %>% 
+    filter(macaddr %in% bothMacs) # notice it only filters for a portion
+  # Creating new columns
+  dflocs <- dflocs %>%
+    group_by(macaddr) %>%
+    mutate(toAP = lead(ap, order_by = macaddr),
+           toLoc = lead(location, order_by = macaddr),
+           nextTime = lead(`_time`, order_by = macaddr),
+           timeDiff = as.numeric(difftime(nextTime, `_time`, units = "secs"))) %>%
+    rename(fromAP = ap,
+           fromLoc = location)
+  # Creating datatable of most common ap to ap jumps with accounting for macs -- that is, 10 events to the same AP in a row is counted as 1
+  # Code below is from howLong but replaced fromLoc->fromAP
+  dfap <- dflocs %>% # creating column with index that changes when location changes
+    group_by(macaddr) %>% 
+    mutate(id = rleid(fromAP))
+  dfap <- dfap %>% # summing up the amount of time spent at an ap
+    group_by(macaddr, id, fromAP) %>% 
+    summarise(totalTime = sum(timeDiff), 
+              startTime = min(`_time`), 
+              endTime = max(`_time`)) %>% 
+    group_by(macaddr) %>% 
+    mutate(toAP = lead(fromAP, order_by = macaddr)) # create toAP column
+  dfap <- dfap %>% # find most common ap to ap jumps
+    group_by(fromAP, toAP, fromAP, toAP) %>%
+    summarise(freq = n()) %>%
+    arrange(desc(freq))
+  
+  time.steps <- seq(start.time + bin.time, end.time, bin.time) # sequence of all time bins by one hour
+  
+  # Bin events by time step; returns the corresponding color palette
+  # and dataframe from which to draw lines with
+  bin <- lapply(as.character(time.steps), function(step) {
+    step <- as_datetime(step)
+    dflocs <- dflocs %>% # filter events from this time interval
+      filter(`_time` %within% interval(step - bin.time, step))
+    
+    # Finding viable paths
+    temp <- findPaths(dflocs, fLoc, tLoc, full = TRUE)
+    if(is.null(temp)) { # no viable paths were found
+      # print no paths found
+      return()
+    } else if(length(temp[complete.cases(temp$subPaths)]) == 0) {
+      # print no paths found
+      return()
+    }
+    
+    fullP <- temp$fullPaths # full fLoc->tLoc paths
+    subP <- temp$subPaths # A->B paths
+    
+    subP <- subP[!is.na(subP$freq), ] # get rid of na
+    subP <- subP %>% # small->big for better plots
+      arrange(freq)
+    # Getting location coordinates
+    subP <- merge.data.frame(subP, coord, by.x = "fromLoc", by.y = "location", sort = FALSE)
+    subP <- merge.data.frame(subP, coord, by.x = "toLoc", by.y = "location", sort = FALSE)
+    subP <- subP[subP$freq > stats::quantile(subP$freq,prob=1-n/100), ] # keep paths with a lot of macs taking it and toss rest
+    subP <- subP[subP$fromLoc != subP$toLoc, ] # get rid of A->A paths
+    
+    # Making color palette
+    colorPal <- colorBin(colorL, subP$freq)
+    
+    return(list(subP = subP, colorPal = colorPal))
+  })
 }
-SP <- SpatialPolygons(polys)
-for(x in 1:nrow(coord)){
-  SP@polygons[[x]]@ID <- as.character(x)
-}
-SPDF <- SpatialPolygonsDataFrame(SP, data=data.frame(x=coord[,2], y=coord[,3]))
-# tag polygons with location name
-SPDF@data$ID = coord$location
-a <- sapply(1:length(coord$location), function(x){
-  SPDF@polygons[[x]]@ID <- coord$location[x]
-  SPDF <<- SPDF
-})
 #################
 
 # Define UI 
 ui <- fluidPage(
-   
-   # Application title
-   titlePanel("Duke Wireless Data - Path Visualization"),
-   
-   # Sidebar with inputs
-   sidebarLayout(
-     sidebarPanel(
-       uiOutput("ui"),
-       textInput("fromLoc", "From Location", value = fLoc),
-       textInput("toLoc", "To Location", value = tLoc),
-       actionButton("submitLocs", "Submit Locations"),
-       br(),
-       numericInput("numMacs", "Number of macs to check", value = num.macs, min = 100, max = length(unique(df0419$macaddrs))),
-       actionButton("submitMacs", "Submit Macs"),
-       checkboxInput("full", "View all paths"),
-       p(),
-       actionButton("calculate", "Calculate Paths"),
-       p(),
-       textOutput("submittedInfo")
-     ),
-      
-      # Show a map
-      mainPanel(
-         tabsetPanel(type = "tabs", 
-                     tabPanel("Map", leafletOutput("map", height = 850)),
-                     tabPanel("Table", dataTableOutput("table")))
-      )
-   )
+  
+  # Application title
+  titlePanel("Duke Wireless Data - Path Visualization"),
+  
+  # Sidebar with inputs
+  sidebarLayout(
+    sidebarPanel(
+      uiOutput("ui"),
+      textInput("fromLoc", "From Location", value = fLoc),
+      textInput("toLoc", "To Location", value = tLoc),
+      actionButton("submitLocs", "Submit Locations"),
+      br(),
+      numericInput("numMacs", "Number of macs to check", value = num.macs, min = 100, max = length(unique(df0419$macaddrs))),
+      actionButton("submitMacs", "Submit Macs"),
+      checkboxInput("full", "View all paths"),
+      p(),
+      actionButton("calculate", "Calculate Paths"),
+      p(),
+      textOutput("submittedInfo")
+    ),
+    
+    # Show a map
+    mainPanel(
+      tabsetPanel(type = "tabs", 
+                  tabPanel("Map", leafletOutput("map", height = 850)),
+                  tabPanel("Table", dataTableOutput("table")))
+    )
+  )
 )
 
 server <- function(input, output, session) {
   
   output$ui <- renderUI({
     # Input a time to show temporally close records on map
-    sliderInput("time", "Time", min = start.time, max = end.time,
-                value = c(start.time, end.time), animate = animationOptions(interval=delay),
-                step = step)
+    sliderInput("time", "Time", min = start.time + 3600 * 1, max = end.time, # cutting off 9/1 times
+                value = start.time + bin.time, animate = animationOptions(interval=delay),
+                step = bin.time)
+    # # Input a time interval to show temporally close records on map 
+    # sliderInput("time", "Time", min = start.time, max = end.time,
+    #             value = c(start.time, end.time),
+    #             step = step)
   })
   
   # Creating labels that appear when you click on a polygon
@@ -303,19 +425,26 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     leaflet() %>%
       setView("map", lng = defLong, lat = defLati, zoom = zm) %>% # sets initial map zoom & center
-      addProviderTiles(providers$OpenStreetMap.BlackAndWhite) %>% 
-      addPolygons(data = SPDF, 
-                  layerId = coord$location,
-                  group = coord$location,
-                  popup = polyLabels,
-                  weight = 1,
-                  color = "gray81",
-                  fillOpacity = 0.2,
-                  fillColor = "azure")
+      addProviderTiles(providers$OpenStreetMap.BlackAndWhite) 
+    # %>% 
+    #   addPolygons(data = SPDF, 
+    #               layerId = coord$location,
+    #               group = coord$location,
+    #               popup = polyLabels,
+    #               weight = 1,
+    #               color = "gray81",
+    #               fillOpacity = 0.2,
+    #               fillColor = "azure")
   })
-
+  
   # Submit locations is pressed
   observeEvent(input$submitLocs, {
+    if(input$fromLoc != "" & !input$fromLoc %in% coord$location) {
+      # print fromloc is invalid
+    }
+    if(input$toLoc != "" & !input$toLoc %in% coord$location) {
+      # print toloc is invalid
+    }
     fLoc <<- input$fromLoc
     tLoc <<- input$toLoc
   })
@@ -326,27 +455,48 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$calculate,{
-    withProgress({
+    
+    withProgress(message = "Reading data...", {
       # Clear map
       leafletProxy("map") %>% 
         clearGroup("lines")
       
+      # note to self: to prevent A->B and B->A lines from overcrowding each other,
+      # consider either transforming line weights or fuzzy-ing the coordinates
+      
+      #####
+      # This bit here was done for the football game only.
+      # Filters out macaddrs that do not move.
+      moveMacs <- doesMove(df0419)
+      df0419 <<- df0419 %>% filter(macaddr %in% moveMacs)
+      #####
+      
+      dflocs <- df0419
+      
+      
       # Check to see if we want to see all possible paths
       if(input$full) {
-        bothMacs <- unique(df0419$macaddr)
-        dflocs <- df0419 %>% 
-          filter(macaddr %in% bothMacs[1:num.macs]) # notice it only filters for a portion
+        set.seed(1000)
+        bothMacs <- sample(unique(dflocs$macaddr), num.macs)
+        dflocs <- dflocs %>% 
+          filter(macaddr %in% bothMacs) # notice it only filters for a portion
       } else {
         # Filter for macs that have visited the desired locations to speed up runtimes
         bothMacs <- unique((df0419 %>%
                               filter(location %in% c(fLoc,tLoc)))$macaddr)
+        set.seed(1000)
+        bothMacs <- sample(bothMacs, num.macs)
         dflocs <- df0419 %>%
-          filter(macaddr %in% bothMacs[1:num.macs]) # notice it only filters for a portion
+          filter(macaddr %in% bothMacs) # notice it only filters for a portion
       }
       
       # Filtering for events within time step selected
       dflocs <- dflocs %>% 
-        filter(`_time` %within% interval(input$time[[1]], input$time[[2]])) 
+        filter(`_time` %within% interval(input$time - 3600 * 1, input$time)) # within an hour of the selected interval 
+      
+      # # Filtering for events within time interval selected
+      # dflocs <- dflocs %>% 
+      #   filter(`_time` %within% interval(input$time[[1]], input$time[[2]])) 
       
       # Creating new columns
       dflocs <- dflocs %>%
@@ -375,18 +525,22 @@ server <- function(input, output, session) {
         summarise(freq = n()) %>%
         arrange(desc(freq))
       
-      incProgress()
+      incProgress(message = "Initial filter done")
       
       # Finding viable paths
       temp <- findPaths(dflocs, fLoc, tLoc, full = input$full)
       if(is.null(temp)) { # no viable paths were found
+        # print no paths found
+        return()
+      } else if(length(temp[complete.cases(temp$subPaths)]) == 0) {
+        # print no paths found
         return()
       }
       
       fullP <- temp$fullPaths # full fLoc->tLoc paths
       subP <- temp$subPaths # A->B paths
       
-      incProgress()
+      incProgress(message = "Paths found")
       
       # If we want to visualize all paths, then we only plot 
       # the single location to location paths since it gives more information
@@ -397,7 +551,7 @@ server <- function(input, output, session) {
         # Getting location coordinates
         subP <- merge.data.frame(subP, coord, by.x = "fromLoc", by.y = "location", sort = FALSE)
         subP <- merge.data.frame(subP, coord, by.x = "toLoc", by.y = "location", sort = FALSE)
-        subP <- subP[!subP$freq == 1, ] # get rid of paths with only one mac taking it
+        subP <- subP[subP$freq > stats::quantile(subP$freq,prob=1-n/100), ] # keep paths with a lot of macs taking it and toss rest
         subP <- subP[subP$fromLoc != subP$toLoc, ] # get rid of A->A paths
         
         # Making color palette
@@ -447,6 +601,7 @@ server <- function(input, output, session) {
       # frequencies
       fullP <- fullP %>% # small->big for better plots
         arrange(freq)
+      fullP <- fullP[!fullP$freq == 1, ] # get rid of paths with only one mac taking it
       splitPaths <- sapply(as.character(fullP$fullPaths), strsplit, split = ", ")
       colorPal <- colorBin(colorL, fullP$freq)
       pathsToCoords <- NULL
@@ -457,8 +612,8 @@ server <- function(input, output, session) {
         
         # Creating labels
         lineLabels <- sprintf("%s <br/ >%g",
-                          toString(splitPaths[[i]]), # the path
-                          indivLocs$count[[1]]) %>% # how many macs went that path
+                              toString(splitPaths[[i]]), # the path
+                              indivLocs$count[[1]]) %>% # how many macs went that path
           lapply(htmltools::HTML)
         
         # Adding lines
@@ -467,12 +622,12 @@ server <- function(input, output, session) {
                        lat = pathsToCoords$lat, 
                        layerId = pathsToCoords$index,
                        group = "lines",
-                       weight = pathsToCoords$count,
+                       weight = 3,
                        label = lineLabels,
                        opacity = 0.5, 
                        color = colorPal(pathsToCoords$count),
                        highlightOptions = highlightOptions(
-                         weight = pathsToCoords$count,
+                         weight = 3,
                          color = "red",
                          fillOpacity = 1,
                          bringToFront = TRUE))
@@ -509,6 +664,69 @@ server <- function(input, output, session) {
   #                                             "->", 
   #                                             tLoc)) 
   # }, priority = -1)
+  
+  if(animated) {
+    # hide ui
+    
+    # Change map if time changes
+    observe({
+      req(input$time)
+      leafletProxy("map") %>%
+        clearGroup("lines")
+      selectedTime <- as.character(input$time)
+      if(nchar(selectedTime) < 19) { # input$time cuts off midnight hms
+        selectedTime <- paste0(selectedTime, " 00:00:00") # add it back on
+      }
+      index <- match(selectedTime, as.character(time.steps)) # note to self make time.steps a character earlier
+      
+      step <- bin[[index]]
+      colorPal <- step$colorPal
+      subP <- step$subP
+      
+      if(is.null(subP)){ # no viable paths found
+        return() # this should execute very rarely when the number of macs is large
+      }
+      
+      sapply(1:nrow(subP), function(i) { # plot each path
+        # Creating labels
+        lineLabels <- sprintf("%s <br/ >%g",
+                              toString(c(subP$fromLoc[[i]], subP$toLoc[[i]])), # the path
+                              subP$freq[[i]]) %>% # how many macs went that path
+          lapply(htmltools::HTML)
+        
+        # Adding lines
+        leafletProxy("map") %>%
+          addPolylines(lng = c(subP$long.x[[i]], subP$long.y[[i]]), 
+                       lat = c(subP$lat.x[[i]], subP$lat.y[[i]]), 
+                       layerId = i,
+                       group = "lines",
+                       weight = 3,
+                       label = lineLabels,
+                       opacity = 0.5, 
+                       color = colorPal(subP$freq[[i]]),
+                       highlightOptions = highlightOptions(
+                         weight = 3,
+                         color = "red",
+                         fillOpacity = 1,
+                         bringToFront = TRUE)) %>% 
+          addCircles(lng = subP$long.x[[i]],
+                     lat = subP$lat.x[[i]], 
+                     radius = 5,
+                     weight = 2,
+                     opacity = 0.1,
+                     color = fromCirc) %>% 
+          addCircles(lng = subP$long.y[[i]],
+                     lat = subP$lat.y[[i]], 
+                     radius = 5,
+                     weight = 2,
+                     opacity = 0.1,
+                     color = toCirc)
+      })
+      
+    })
+  }
+  
+  
 }
 
 # Run the application 
